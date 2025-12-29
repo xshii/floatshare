@@ -1,0 +1,3 @@
+[submodule "prettycli"]
+	path = prettycli
+	url = https://github.com/xshii/prettycli
