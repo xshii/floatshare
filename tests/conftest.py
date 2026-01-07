@@ -200,3 +200,30 @@ def temp_db_path(tmp_path) -> str:
 def temp_state_path(tmp_path) -> str:
     """生成临时状态文件路径"""
     return str(tmp_path / "sync_state.json")
+
+
+# ============================================================
+# Mock 数据源 Fixtures
+# ============================================================
+
+
+@pytest.fixture
+def mock_data_source():
+    """Mock 数据源实例"""
+    from tests.mocks.mock_data_source import MockDataSource
+    return MockDataSource()
+
+
+@pytest.fixture
+def mock_data_loader():
+    """Mock DataLoader 实例"""
+    from tests.mocks.mock_data_source import MockDataLoader
+    return MockDataLoader()
+
+
+@pytest.fixture
+def patch_loader(monkeypatch):
+    """自动替换 DataLoader 为 Mock 版本"""
+    from tests.mocks.mock_data_source import MockDataLoader
+    monkeypatch.setattr("src.data.loader.DataLoader", MockDataLoader)
+    monkeypatch.setattr("src.data.syncer.DataLoader", MockDataLoader)
