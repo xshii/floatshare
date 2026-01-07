@@ -1,0 +1,116 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "健康检查",
+      "type": "shell",
+      "command": "python",
+      "args": ["deploy/scripts/health_check.py"],
+      "group": "test",
+      "presentation": {
+        "reveal": "always",
+        "panel": "new"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "年度归档",
+      "type": "shell",
+      "command": "python",
+      "args": [
+        "scripts/archive_yearly.py",
+        "${input:archiveYear}"
+      ],
+      "group": "build",
+      "presentation": {
+        "reveal": "always",
+        "panel": "new"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "年度归档并上传",
+      "type": "shell",
+      "command": "python",
+      "args": [
+        "scripts/archive_yearly.py",
+        "${input:archiveYear}",
+        "--upload"
+      ],
+      "group": "build",
+      "presentation": {
+        "reveal": "always",
+        "panel": "new"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "运行单元测试",
+      "type": "shell",
+      "command": "python",
+      "args": ["-m", "pytest", "ut/", "-v"],
+      "group": {
+        "kind": "test",
+        "isDefault": true
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "new"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "爬取日线数据",
+      "type": "shell",
+      "command": "python",
+      "args": [
+        "-c",
+        "from src.data.syncer import DataSyncer, SyncPriority; s = DataSyncer(); s.sync_daily(priorities=[SyncPriority.HS300])"
+      ],
+      "group": "build",
+      "presentation": {
+        "reveal": "always",
+        "panel": "new"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "查看同步进度",
+      "type": "shell",
+      "command": "python",
+      "args": [
+        "-c",
+        "from src.data.syncer import DataSyncer; s = DataSyncer(); print(s.get_sync_progress())"
+      ],
+      "group": "build",
+      "presentation": {
+        "reveal": "always",
+        "panel": "new"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "清除同步状态",
+      "type": "shell",
+      "command": "python",
+      "args": [
+        "-c",
+        "from src.data.syncer import DataSyncer; DataSyncer().clear_state()"
+      ],
+      "group": "build",
+      "presentation": {
+        "reveal": "always",
+        "panel": "new"
+      },
+      "problemMatcher": []
+    }
+  ],
+  "inputs": [
+    {
+      "id": "archiveYear",
+      "type": "promptString",
+      "description": "输入要归档的年份 (如 2024)",
+      "default": "2024"
+    }
+  ]
+}
