@@ -82,10 +82,11 @@ class DataSourceHealthChecker:
         try:
             import akshare as ak
 
-            # 检查1: 股票列表
+            # 检查1: 股票列表 (使用实时行情接口获取，避免 Excel 依赖)
             start = time.time()
             try:
-                df = ak.stock_info_a_code_name()
+                # 优先使用 stock_zh_a_spot_em，同时获取股票列表
+                df = ak.stock_zh_a_spot_em()
                 elapsed = time.time() - start
                 results.append(CheckResult(
                     source="akshare",
@@ -95,7 +96,12 @@ class DataSourceHealthChecker:
                     data_count=len(df),
                 ))
                 logger.info(f"[akshare] 股票列表: {len(df)} 只, {elapsed:.2f}s")
+                # 实时行情已经获取，标记跳过后续重复获取
+                realtime_done = True
+                realtime_df = df
             except Exception as e:
+                realtime_done = False
+                realtime_df = None
                 results.append(CheckResult(
                     source="akshare",
                     check_type="stock_list",
@@ -105,10 +111,14 @@ class DataSourceHealthChecker:
                 ))
                 logger.error(f"[akshare] 股票列表失败: {e}")
 
-            # 检查2: 日线数据
+            # 检查2: 日线数据 (多接口尝试)
             for code in self.test_codes[:1]:
                 ticker = code.split(".")[0]
                 start = time.time()
+                success = False
+                last_error = None
+
+                # 尝试方法1: stock_zh_a_hist (东方财富)
                 try:
                     end_date = date.today()
                     start_date = end_date - timedelta(days=7)
@@ -128,38 +138,65 @@ class DataSourceHealthChecker:
                         data_count=len(df),
                     ))
                     logger.info(f"[akshare] 日线 {code}: {len(df)} 条, {elapsed:.2f}s")
+                    success = True
                 except Exception as e:
+                    last_error = e
+                    logger.warning(f"[akshare] 日线 {code} 方法1失败: {e}")
+
+                # 尝试方法2: stock_zh_a_hist_min_em (如果方法1失败)
+                if not success:
+                    try:
+                        df = ak.stock_zh_a_hist_min_em(symbol=ticker, period="1", adjust="")
+                        elapsed = time.time() - start
+                        results.append(CheckResult(
+                            source="akshare",
+                            check_type=f"daily_{code}",
+                            success=True,
+                            response_time=elapsed,
+                            data_count=len(df),
+                        ))
+                        logger.info(f"[akshare] 日线(分钟替代) {code}: {len(df)} 条, {elapsed:.2f}s")
+                        success = True
+                    except Exception as e2:
+                        last_error = e2
+                        logger.warning(f"[akshare] 日线 {code} 方法2失败: {e2}")
+
+                if not success:
                     results.append(CheckResult(
                         source="akshare",
                         check_type=f"daily_{code}",
                         success=False,
                         response_time=time.time() - start,
+                        error=str(last_error),
+                    ))
+                    logger.error(f"[akshare] 日线 {code} 全部方法失败: {last_error}")
+
+            # 检查3: 实时行情 (如果股票列表已成功获取，复用数据)
+            if realtime_done and realtime_df is not None:
+                # 已在股票列表检查时获取，跳过重复请求
+                logger.info(f"[akshare] 实时行情: 复用股票列表数据, {len(realtime_df)} 只")
+            else:
+                start = time.time()
+                try:
+                    df = ak.stock_zh_a_spot_em()
+                    elapsed = time.time() - start
+                    results.append(CheckResult(
+                        source="akshare",
+                        check_type="realtime",
+                        success=True,
+                        response_time=elapsed,
+                        data_count=len(df),
+                    ))
+                    logger.info(f"[akshare] 实时行情: {len(df)} 只, {elapsed:.2f}s")
+                except Exception as e:
+                    results.append(CheckResult(
+                        source="akshare",
+                        check_type="realtime",
+                        success=False,
+                        response_time=time.time() - start,
                         error=str(e),
                     ))
-                    logger.error(f"[akshare] 日线 {code} 失败: {e}")
-
-            # 检查3: 实时行情
-            start = time.time()
-            try:
-                df = ak.stock_zh_a_spot_em()
-                elapsed = time.time() - start
-                results.append(CheckResult(
-                    source="akshare",
-                    check_type="realtime",
-                    success=True,
-                    response_time=elapsed,
-                    data_count=len(df),
-                ))
-                logger.info(f"[akshare] 实时行情: {len(df)} 只, {elapsed:.2f}s")
-            except Exception as e:
-                results.append(CheckResult(
-                    source="akshare",
-                    check_type="realtime",
-                    success=False,
-                    response_time=time.time() - start,
-                    error=str(e),
-                ))
-                logger.error(f"[akshare] 实时行情失败: {e}")
+                    logger.error(f"[akshare] 实时行情失败: {e}")
 
         except ImportError:
             logger.error("[akshare] 未安装")
