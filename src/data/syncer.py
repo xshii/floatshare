@@ -10,6 +10,7 @@
 
 import json
 import time
+import random
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime, timedelta
@@ -27,6 +28,62 @@ logger = logging.getLogger(__name__)
 
 
 # ============================================================
+# 代理池管理
+# ============================================================
+
+
+class ProxyPool:
+    """代理IP池"""
+
+    def __init__(self, proxies: Optional[List[str]] = None):
+        """
+        Args:
+            proxies: 代理列表，如 ["http://ip1:port", "http://ip2:port"]
+        """
+        self.proxies = proxies or []
+        self.current_index = 0
+        self.failed_proxies: Dict[str, int] = {}  # proxy -> fail_count
+        self.max_fails = 3
+
+    def get_proxy(self) -> Optional[str]:
+        """获取下一个可用代理（轮换）"""
+        if not self.proxies:
+            return None
+
+        available = [p for p in self.proxies if self.failed_proxies.get(p, 0) < self.max_fails]
+
+        if not available:
+            # 所有代理都失败了，重置
+            self.failed_proxies.clear()
+            available = self.proxies
+
+        proxy = available[self.current_index % len(available)]
+        self.current_index += 1
+        return proxy
+
+    def report_failure(self, proxy: str) -> None:
+        """报告代理失败"""
+        self.failed_proxies[proxy] = self.failed_proxies.get(proxy, 0) + 1
+        logger.warning(f"代理 {proxy} 失败 {self.failed_proxies[proxy]} 次")
+
+    def report_success(self, proxy: str) -> None:
+        """报告代理成功，重置失败计数"""
+        if proxy in self.failed_proxies:
+            self.failed_proxies[proxy] = 0
+
+    def add_proxies(self, proxies: List[str]) -> None:
+        """添加代理"""
+        for p in proxies:
+            if p not in self.proxies:
+                self.proxies.append(p)
+
+    @property
+    def available_count(self) -> int:
+        """可用代理数量"""
+        return len([p for p in self.proxies if self.failed_proxies.get(p, 0) < self.max_fails])
+
+
+# ============================================================
 # 多数据源管理
 # ============================================================
 
@@ -39,6 +96,7 @@ class SourceHealth:
     success_count: int = 0
     fail_count: int = 0
     consecutive_fails: int = 0
+    consecutive_empty: int = 0  # 连续返回空数据次数（可能被限流）
     last_fail_time: Optional[float] = None
     disabled_until: Optional[float] = None  # 禁用到什么时候
     avg_response_time: float = 0.0  # 平均响应时间
@@ -56,15 +114,30 @@ class SourceHealth:
             return True
         return time.time() >= self.disabled_until
 
+    @property
+    def may_be_rate_limited(self) -> bool:
+        """可能被限流（连续空数据）"""
+        return self.consecutive_empty >= 5
+
     def record_success(self, response_time: float) -> None:
         """记录成功"""
         self.success_count += 1
         self.consecutive_fails = 0
+        self.consecutive_empty = 0  # 有数据，重置空计数
         # 更新平均响应时间（滑动平均）
         if self.avg_response_time == 0:
             self.avg_response_time = response_time
         else:
             self.avg_response_time = 0.9 * self.avg_response_time + 0.1 * response_time
+
+    def record_empty(self) -> None:
+        """记录返回空数据（可能被限流）"""
+        self.consecutive_empty += 1
+        if self.consecutive_empty >= 5:
+            logger.warning(
+                f"数据源 {self.name} 连续 {self.consecutive_empty} 次返回空数据，"
+                "可能被限流，建议切换数据源或暂停"
+            )
 
     def record_failure(self, backoff_base: float = 60.0) -> None:
         """记录失败，指数退避"""
@@ -173,6 +246,11 @@ class SourcePool:
             loader = self.loaders[source]
             health = self.health[source]
 
+            # 如果该数据源可能被限流，跳过尝试下一个
+            if health.may_be_rate_limited and len(sources) > 1:
+                logger.info(f"数据源 {source} 可能被限流，尝试下一个")
+                continue
+
             try:
                 start_time = time.time()
                 df = loader.get_daily(
@@ -187,7 +265,8 @@ class SourcePool:
                     health.record_success(elapsed)
                     return df, source
 
-                # 空数据不算失败，可能是该股票确实没数据
+                # 空数据记录（用于检测限流）
+                health.record_empty()
                 return df, source
 
             except Exception as e:
@@ -256,8 +335,10 @@ class SourcePool:
                 "success_count": h.success_count,
                 "fail_count": h.fail_count,
                 "consecutive_fails": h.consecutive_fails,
+                "consecutive_empty": h.consecutive_empty,
                 "avg_response_time": f"{h.avg_response_time:.2f}s",
                 "is_available": h.is_available,
+                "may_be_rate_limited": h.may_be_rate_limited,
             }
             for name, h in self.health.items()
         }
@@ -315,42 +396,56 @@ class SyncState:
 
 
 class RateLimiter:
-    """速率限制器"""
+    """速率限制器（带随机抖动）"""
 
     def __init__(
         self,
         requests_per_minute: int = 60,
         batch_size: int = 50,
         batch_pause: float = 10.0,
+        jitter: float = 0.5,
     ):
         """
         Args:
             requests_per_minute: 每分钟最大请求数
             batch_size: 批次大小（每处理多少个后暂停）
             batch_pause: 批次间暂停时间（秒）
+            jitter: 随机抖动比例 (0-1)，避免固定频率特征
         """
         self.requests_per_minute = requests_per_minute
         self.min_interval = 60.0 / requests_per_minute
         self.batch_size = batch_size
         self.batch_pause = batch_pause
+        self.jitter = jitter
         self.request_count = 0
         self.last_request_time = 0.0
 
+    def _add_jitter(self, base_time: float) -> float:
+        """添加随机抖动"""
+        if self.jitter <= 0:
+            return base_time
+        jitter_range = base_time * self.jitter
+        return base_time + random.uniform(-jitter_range, jitter_range)
+
     def wait(self) -> None:
-        """等待以满足速率限制"""
+        """等待以满足速率限制（带随机抖动）"""
         now = time.time()
         elapsed = now - self.last_request_time
 
-        if elapsed < self.min_interval:
-            time.sleep(self.min_interval - elapsed)
+        # 计算带抖动的等待时间
+        wait_time = self._add_jitter(self.min_interval)
+
+        if elapsed < wait_time:
+            time.sleep(wait_time - elapsed)
 
         self.last_request_time = time.time()
         self.request_count += 1
 
-        # 批次暂停
+        # 批次暂停（也带抖动）
         if self.request_count % self.batch_size == 0:
-            logger.info(f"已处理 {self.request_count} 个请求，暂停 {self.batch_pause} 秒...")
-            time.sleep(self.batch_pause)
+            pause = self._add_jitter(self.batch_pause)
+            logger.info(f"已处理 {self.request_count} 个请求，暂停 {pause:.1f} 秒...")
+            time.sleep(pause)
 
 
 class DataSyncer:

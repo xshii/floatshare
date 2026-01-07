@@ -43,3 +43,17 @@ logs/
 tmp/
 temp/
 *.tmp
+
+# Database files (runtime data, not source code)
+*.db
+*.sqlite
+*.sqlite3
+data/*.db
+data/sync_state.json
+
+# Large data files
+*.csv
+*.parquet
+*.h5
+*.hdf5
+!tests/fixtures/*.csv
