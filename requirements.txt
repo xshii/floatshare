@@ -1,0 +1,19 @@
+# Core dependencies
+pandas>=2.0.0
+numpy>=1.24.0
+sqlalchemy>=2.0.0
+
+# Data sources
+akshare>=1.10.0
+# tushare>=1.2.0  # 可选，需要token
+
+# Visualization (optional)
+matplotlib>=3.7.0
+seaborn>=0.12.0
+
+# Development
+pytest>=7.0.0
+pytest-cov>=4.0.0
+black>=23.0.0
+ruff>=0.1.0
+mypy>=1.0.0
