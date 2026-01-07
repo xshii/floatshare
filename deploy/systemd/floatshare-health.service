@@ -1,0 +1,23 @@
+[Unit]
+Description=FloatShare Data Source Health Check
+After=network.target
+
+[Service]
+Type=oneshot
+User=floatshare
+Group=floatshare
+WorkingDirectory=/opt/floatshare
+Environment=PYTHONPATH=/opt/floatshare
+ExecStart=/opt/floatshare/venv/bin/python deploy/scripts/health_check.py \
+    --config deploy/configs/health_check.json \
+    --output /var/log/floatshare/health_latest.json
+
+# 日志
+StandardOutput=append:/var/log/floatshare/health.log
+StandardError=append:/var/log/floatshare/health.log
+
+# 超时
+TimeoutStartSec=300
+
+[Install]
+WantedBy=multi-user.target
