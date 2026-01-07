@@ -166,3 +166,50 @@ class EastMoneySource(BaseDataSource):
     ) -> List[date]:
         """获取交易日历"""
         return []
+
+    def get_dividend(
+        self,
+        code: str,
+        start_date: Optional[date] = None,
+        end_date: Optional[date] = None,
+    ) -> pd.DataFrame:
+        """获取分红送股数据（使用AKShare）"""
+        ticker = code.split(".")[0] if "." in code else code
+
+        try:
+            df = self.ak.stock_fhps_em(symbol=ticker)
+        except Exception:
+            return pd.DataFrame()
+
+        if df.empty:
+            return df
+
+        # 重命名列
+        column_mapping = {
+            "报告期": "report_period",
+            "除权除息日": "ex_date",
+            "股权登记日": "record_date",
+            "派息日": "pay_date",
+            "送股比例": "bonus_ratio",
+            "转增比例": "transfer_ratio",
+            "派息比例": "cash_div",
+        }
+        rename_cols = {k: v for k, v in column_mapping.items() if k in df.columns}
+        df = df.rename(columns=rename_cols)
+
+        df["code"] = code
+
+        # 转换日期
+        if "ex_date" in df.columns:
+            df["ex_date"] = pd.to_datetime(df["ex_date"], errors="coerce")
+            df = df.dropna(subset=["ex_date"])
+
+        # 转换比例
+        for col in ["bonus_ratio", "transfer_ratio"]:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0) / 10
+
+        if "cash_div" in df.columns:
+            df["cash_div"] = pd.to_numeric(df["cash_div"], errors="coerce").fillna(0) / 10
+
+        return df.reset_index(drop=True)

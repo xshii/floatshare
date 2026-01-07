@@ -190,3 +190,79 @@ class TushareSource(BaseDataSource):
 
         dates = pd.to_datetime(df["cal_date"]).dt.date.tolist()
         return sorted(dates)
+
+    def get_dividend(
+        self,
+        code: str,
+        start_date: Optional[date] = None,
+        end_date: Optional[date] = None,
+    ) -> pd.DataFrame:
+        """
+        获取分红送股数据
+
+        Args:
+            code: 股票代码
+            start_date: 开始日期
+            end_date: 结束日期
+
+        Returns:
+            DataFrame with columns:
+            - code: 股票代码
+            - ex_date: 除权除息日
+            - record_date: 股权登记日
+            - pay_date: 派息日
+            - cash_div: 每股现金分红（元）
+            - bonus_ratio: 每股送股比例
+            - transfer_ratio: 每股转增比例
+        """
+        try:
+            # Tushare 分红数据接口
+            df = self.pro.dividend(ts_code=code)
+        except Exception:
+            return pd.DataFrame()
+
+        if df.empty:
+            return df
+
+        # 重命名列
+        df = df.rename(
+            columns={
+                "ts_code": "code",
+                "end_date": "report_period",
+                "ann_date": "ann_date",
+                "div_proc": "progress",
+                "stk_div": "bonus_ratio",  # 每股送股
+                "stk_bo_rate": "transfer_ratio",  # 每股转增
+                "stk_co_rate": "allot_ratio",  # 每股配股
+                "cash_div": "cash_div",  # 每股分红（税前）
+                "cash_div_tax": "cash_div_after_tax",  # 每股分红（税后）
+                "record_date": "record_date",
+                "ex_date": "ex_date",
+                "pay_date": "pay_date",
+                "div_listdate": "list_date",  # 红股上市日
+                "imp_ann_date": "impl_date",  # 实施公告日
+            }
+        )
+
+        # 转换日期格式
+        date_cols = ["ex_date", "record_date", "pay_date", "ann_date", "list_date", "impl_date"]
+        for col in date_cols:
+            if col in df.columns:
+                df[col] = pd.to_datetime(df[col], errors="coerce")
+
+        # 确保数值列为数值类型
+        numeric_cols = ["cash_div", "cash_div_after_tax", "bonus_ratio", "transfer_ratio", "allot_ratio"]
+        for col in numeric_cols:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
+
+        # 过滤日期
+        if "ex_date" in df.columns:
+            df = df.dropna(subset=["ex_date"])
+            if start_date:
+                df = df[df["ex_date"] >= pd.Timestamp(start_date)]
+            if end_date:
+                df = df[df["ex_date"] <= pd.Timestamp(end_date)]
+
+        df = df.sort_values("ex_date", ascending=False)
+        return df.reset_index(drop=True)

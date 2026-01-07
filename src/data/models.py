@@ -621,3 +621,173 @@ class FinancialData:
     total_assets: Optional[float] = None  # 总资产
     total_liab: Optional[float] = None  # 总负债
     total_equity: Optional[float] = None  # 股东权益
+
+
+# ============================================================
+# 分红除权数据
+# ============================================================
+
+
+class DividendType(Enum):
+    """分红类型"""
+
+    CASH = "cash"  # 现金分红
+    STOCK = "stock"  # 送股
+    TRANSFER = "transfer"  # 转增
+    ALLOT = "allot"  # 配股
+    SPLIT = "split"  # 拆股
+    CONSOLIDATE = "consolidate"  # 并股
+
+
+@dataclass
+class Dividend:
+    """
+    分红除权数据
+
+    A股分红税规则：
+    - 持股 ≤ 1个月：税率 20%
+    - 持股 1个月~1年：税率 10%
+    - 持股 > 1年：免税
+    注意：税款在卖出时扣除，不是分红时
+
+    复权因子计算：
+    - 送股/转增: new_factor = old_factor * (1 + bonus_ratio + transfer_ratio)
+    - 现金分红: new_factor = old_factor * pre_close / (pre_close - cash_div)
+    - 配股: new_factor = old_factor * (pre_close + allot_ratio * allot_price) / pre_close
+    """
+
+    code: str  # 证券代码
+    ex_date: date  # 除权除息日（当天买入不享受分红）
+    div_type: DividendType  # 分红类型
+
+    # 现金分红
+    cash_div: float = 0.0  # 每股现金分红（税前，元）
+    cash_div_after_tax: Optional[float] = None  # 每股现金分红（税后，元）
+
+    # 送股转增
+    bonus_ratio: float = 0.0  # 每股送股比例（如10送3，则为0.3）
+    transfer_ratio: float = 0.0  # 每股转增比例（如10转5，则为0.5）
+
+    # 配股
+    allot_ratio: float = 0.0  # 每股配股比例（如10配2，则为0.2）
+    allot_price: Optional[float] = None  # 配股价格
+
+    # 重要日期
+    record_date: Optional[date] = None  # 股权登记日（当天持有可享受分红）
+    pay_date: Optional[date] = None  # 派息日/到账日
+    list_date: Optional[date] = None  # 红股上市日
+
+    # 公告信息
+    ann_date: Optional[date] = None  # 公告日期
+    impl_date: Optional[date] = None  # 实施日期
+
+    # 其他
+    progress: Optional[str] = None  # 进度（预案/董事会/股东大会/实施）
+    report_period: Optional[str] = None  # 分红所属报告期
+
+    @property
+    def total_bonus_ratio(self) -> float:
+        """总送转比例"""
+        return self.bonus_ratio + self.transfer_ratio
+
+    @property
+    def has_cash(self) -> bool:
+        """是否有现金分红"""
+        return self.cash_div > 0
+
+    @property
+    def has_stock(self) -> bool:
+        """是否有送股/转增"""
+        return self.total_bonus_ratio > 0
+
+    @property
+    def has_allot(self) -> bool:
+        """是否有配股"""
+        return self.allot_ratio > 0
+
+    def calc_adj_factor_change(self, pre_close: float) -> float:
+        """
+        计算复权因子变化倍数
+
+        Args:
+            pre_close: 除权前一日收盘价
+
+        Returns:
+            复权因子变化倍数，new_factor = old_factor * 返回值
+        """
+        if pre_close <= 0:
+            return 1.0
+
+        # 除权除息后理论价格
+        # 除权价 = (前收盘 - 每股分红 + 配股价 * 配股比例) / (1 + 送股比例 + 转增比例 + 配股比例)
+        ex_price = (pre_close - self.cash_div + self.allot_price * self.allot_ratio
+                    if self.allot_price else pre_close - self.cash_div)
+        ex_price = ex_price / (1 + self.total_bonus_ratio + self.allot_ratio)
+
+        # 复权因子变化 = 前收盘价 / 除权价
+        if ex_price > 0:
+            return pre_close / ex_price
+        return 1.0
+
+    def calc_tax(self, holding_days: int) -> float:
+        """
+        计算分红税率
+
+        Args:
+            holding_days: 持股天数
+
+        Returns:
+            税率 (0.0 ~ 0.2)
+        """
+        if holding_days <= 30:
+            return 0.20  # 20%
+        elif holding_days <= 365:
+            return 0.10  # 10%
+        else:
+            return 0.0  # 免税
+
+    def cash_after_tax(self, holding_days: int) -> float:
+        """
+        计算税后现金分红
+
+        Args:
+            holding_days: 持股天数
+
+        Returns:
+            税后每股分红（元）
+        """
+        tax_rate = self.calc_tax(holding_days)
+        return self.cash_div * (1 - tax_rate)
+
+    def to_dict(self) -> Dict[str, Any]:
+        """转换为字典"""
+        return {
+            "code": self.code,
+            "ex_date": self.ex_date.isoformat(),
+            "div_type": self.div_type.value,
+            "cash_div": self.cash_div,
+            "bonus_ratio": self.bonus_ratio,
+            "transfer_ratio": self.transfer_ratio,
+            "allot_ratio": self.allot_ratio,
+            "allot_price": self.allot_price,
+            "record_date": self.record_date.isoformat() if self.record_date else None,
+            "pay_date": self.pay_date.isoformat() if self.pay_date else None,
+            "ann_date": self.ann_date.isoformat() if self.ann_date else None,
+        }
+
+
+@dataclass
+class CorporateAction:
+    """
+    公司行为（更通用的除权事件）
+
+    包括：分红、送股、配股、拆股、并股、更名等
+    """
+
+    code: str
+    action_date: date  # 生效日期
+    action_type: str  # 行为类型
+    description: Optional[str] = None  # 描述
+    old_value: Optional[float] = None  # 原值
+    new_value: Optional[float] = None  # 新值
+    adj_factor_change: float = 1.0  # 复权因子变化

@@ -99,6 +99,34 @@ class DataLoader:
         """获取交易日历"""
         return self._adapter.get_trade_calendar(start_date, end_date)
 
+    def get_dividend(
+        self,
+        code: str,
+        start_date: Optional[date] = None,
+        end_date: Optional[date] = None,
+    ) -> pd.DataFrame:
+        """
+        获取分红送股数据
+
+        Args:
+            code: 股票代码
+            start_date: 开始日期
+            end_date: 结束日期
+
+        Returns:
+            DataFrame with columns:
+            - code: 股票代码
+            - ex_date: 除权除息日
+            - record_date: 股权登记日
+            - pay_date: 派息日
+            - cash_div: 每股现金分红（元）
+            - bonus_ratio: 每股送股比例
+            - transfer_ratio: 每股转增比例
+            - allot_ratio: 每股配股比例
+            - allot_price: 配股价格
+        """
+        return self._adapter.get_dividend(code, start_date, end_date)
+
 
 class BaseDataSource(ABC):
     """数据源基类"""
@@ -164,4 +192,19 @@ class BaseDataSource(ABC):
         end_date: Optional[date] = None,
     ) -> List[date]:
         """获取交易日历"""
+        pass
+
+    @abstractmethod
+    def get_dividend(
+        self,
+        code: str,
+        start_date: Optional[date] = None,
+        end_date: Optional[date] = None,
+    ) -> pd.DataFrame:
+        """
+        获取分红送股数据
+
+        Returns:
+            DataFrame with columns: code, ex_date, cash_div, bonus_ratio, transfer_ratio, ...
+        """
         pass

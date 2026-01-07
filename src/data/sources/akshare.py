@@ -246,3 +246,88 @@ class AKShareSource(BaseDataSource):
             return sorted(dates)
         except Exception:
             return []
+
+    def get_dividend(
+        self,
+        code: str,
+        start_date: Optional[date] = None,
+        end_date: Optional[date] = None,
+    ) -> pd.DataFrame:
+        """
+        获取分红送股数据
+
+        Args:
+            code: 股票代码
+            start_date: 开始日期
+            end_date: 结束日期
+
+        Returns:
+            DataFrame with columns:
+            - code: 股票代码
+            - ex_date: 除权除息日
+            - record_date: 股权登记日
+            - pay_date: 派息日
+            - cash_div: 每股现金分红（元）
+            - bonus_ratio: 每股送股比例
+            - transfer_ratio: 每股转增比例
+            - allot_ratio: 每股配股比例
+            - allot_price: 配股价格
+        """
+        ticker = self._remove_market_suffix(code)
+
+        try:
+            # 获取分红送配数据
+            df = self.ak.stock_fhps_em(symbol=ticker)
+        except Exception:
+            return pd.DataFrame()
+
+        if df.empty:
+            return df
+
+        # 重命名列（东方财富数据格式）
+        column_mapping = {
+            "报告期": "report_period",
+            "业绩披露日期": "ann_date",
+            "除权除息日": "ex_date",
+            "股权登记日": "record_date",
+            "派息日": "pay_date",
+            "送股比例": "bonus_ratio",
+            "转增比例": "transfer_ratio",
+            "派息比例": "cash_div",
+            "配股比例": "allot_ratio",
+            "配股价格": "allot_price",
+            "方案进度": "progress",
+        }
+
+        # 只重命名存在的列
+        rename_cols = {k: v for k, v in column_mapping.items() if k in df.columns}
+        df = df.rename(columns=rename_cols)
+
+        df["code"] = code
+
+        # 转换日期格式
+        date_cols = ["ex_date", "record_date", "pay_date", "ann_date"]
+        for col in date_cols:
+            if col in df.columns:
+                df[col] = pd.to_datetime(df[col], errors="coerce")
+
+        # 转换比例（东方财富的格式是"10送3"，需要转换为0.3）
+        ratio_cols = ["bonus_ratio", "transfer_ratio", "allot_ratio"]
+        for col in ratio_cols:
+            if col in df.columns:
+                # 如果是数值型，除以10转换为比例
+                df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0) / 10
+
+        # 转换现金分红（东方财富的格式是"10派X元"，X就是每10股分红）
+        if "cash_div" in df.columns:
+            df["cash_div"] = pd.to_numeric(df["cash_div"], errors="coerce").fillna(0) / 10
+
+        # 过滤日期
+        if "ex_date" in df.columns:
+            df = df.dropna(subset=["ex_date"])
+            if start_date:
+                df = df[df["ex_date"] >= pd.Timestamp(start_date)]
+            if end_date:
+                df = df[df["ex_date"] <= pd.Timestamp(end_date)]
+
+        return df.reset_index(drop=True)
