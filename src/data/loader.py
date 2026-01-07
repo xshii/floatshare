@@ -46,7 +46,7 @@ class DataLoader:
         code: str,
         start_date: Optional[date] = None,
         end_date: Optional[date] = None,
-        adj: str = "qfq",
+        adj: Optional[str] = None,
     ) -> pd.DataFrame:
         """
         获取日线数据
@@ -55,10 +55,12 @@ class DataLoader:
             code: 股票代码
             start_date: 开始日期
             end_date: 结束日期
-            adj: 复权类型 (qfq-前复权, hfq-后复权, None-不复权)
+            adj: 复权类型 (None-不复权[默认], qfq-前复权, hfq-后复权)
+                 推荐存储不复权数据，使用时动态复权
 
         Returns:
-            DataFrame with columns: date, open, high, low, close, volume, amount
+            DataFrame with columns: trade_date, open, high, low, close, volume, amount, adj_factor
+            价格为不复权原始价格，adj_factor 为累计复权因子
         """
         return self._adapter.get_daily(code, start_date, end_date, adj)
 
@@ -112,9 +114,17 @@ class BaseDataSource(ABC):
         code: str,
         start_date: Optional[date] = None,
         end_date: Optional[date] = None,
-        adj: str = "qfq",
+        adj: Optional[str] = None,
     ) -> pd.DataFrame:
-        """获取日线数据"""
+        """
+        获取日线数据
+
+        Args:
+            adj: 复权类型 (None-不复权[默认], qfq-前复权, hfq-后复权)
+
+        Returns:
+            DataFrame，价格默认为不复权，包含 adj_factor 列
+        """
         pass
 
     @abstractmethod

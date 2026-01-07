@@ -52,22 +52,41 @@ class AKShareSource(BaseDataSource):
         code: str,
         start_date: Optional[date] = None,
         end_date: Optional[date] = None,
-        adj: str = "qfq",
+        adj: Optional[str] = None,
     ) -> pd.DataFrame:
-        """获取日线数据"""
-        ticker = self._remove_market_suffix(code)
+        """
+        获取日线数据
 
-        # 复权类型映射
-        adj_map = {"qfq": "qfq", "hfq": "hfq", None: ""}
-        adjust = adj_map.get(adj, "qfq")
+        Args:
+            code: 股票代码
+            start_date: 开始日期
+            end_date: 结束日期
+            adj: 复权类型 (None-不复权[默认], qfq-前复权, hfq-后复权)
+
+        Returns:
+            DataFrame，价格默认为不复权，包含 adj_factor 列
+        """
+        ticker = self._remove_market_suffix(code)
+        start_str = start_date.strftime("%Y%m%d") if start_date else "19900101"
+        end_str = end_date.strftime("%Y%m%d") if end_date else None
 
         try:
+            # 获取不复权数据
             df = self.ak.stock_zh_a_hist(
                 symbol=ticker,
                 period="daily",
-                start_date=start_date.strftime("%Y%m%d") if start_date else "19900101",
-                end_date=end_date.strftime("%Y%m%d") if end_date else None,
-                adjust=adjust,
+                start_date=start_str,
+                end_date=end_str,
+                adjust="",  # 不复权
+            )
+
+            # 同时获取后复权数据来计算复权因子
+            df_hfq = self.ak.stock_zh_a_hist(
+                symbol=ticker,
+                period="daily",
+                start_date=start_str,
+                end_date=end_str,
+                adjust="hfq",
             )
         except Exception:
             return pd.DataFrame()
@@ -93,7 +112,28 @@ class AKShareSource(BaseDataSource):
 
         df["code"] = code
         df["trade_date"] = pd.to_datetime(df["trade_date"])
+
+        # 计算复权因子: adj_factor = 后复权价格 / 不复权价格
+        if not df_hfq.empty and "收盘" in df_hfq.columns:
+            df_hfq = df_hfq.rename(columns={"日期": "trade_date", "收盘": "close_hfq"})
+            df_hfq["trade_date"] = pd.to_datetime(df_hfq["trade_date"])
+            df = df.merge(df_hfq[["trade_date", "close_hfq"]], on="trade_date", how="left")
+            df["adj_factor"] = df["close_hfq"] / df["close"]
+            df["adj_factor"] = df["adj_factor"].fillna(1.0)
+            df = df.drop(columns=["close_hfq"])
+        else:
+            df["adj_factor"] = 1.0
+
         df = df.sort_values("trade_date")
+
+        # 如果请求复权数据，动态计算
+        if adj == "hfq":
+            for col in ["open", "high", "low", "close"]:
+                df[col] = df[col] * df["adj_factor"]
+        elif adj == "qfq":
+            latest_factor = df["adj_factor"].iloc[-1]
+            for col in ["open", "high", "low", "close"]:
+                df[col] = df[col] * df["adj_factor"] / latest_factor
 
         return df.reset_index(drop=True)
 

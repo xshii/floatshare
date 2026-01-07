@@ -50,13 +50,24 @@ class TushareSource(BaseDataSource):
         code: str,
         start_date: Optional[date] = None,
         end_date: Optional[date] = None,
-        adj: str = "qfq",
+        adj: Optional[str] = None,
     ) -> pd.DataFrame:
-        """获取日线数据"""
+        """
+        获取日线数据
+
+        Args:
+            code: 股票代码
+            start_date: 开始日期
+            end_date: 结束日期
+            adj: 复权类型 (None-不复权[默认], qfq-前复权, hfq-后复权)
+
+        Returns:
+            DataFrame，价格默认为不复权，包含 adj_factor 列
+        """
         start_str = start_date.strftime("%Y%m%d") if start_date else None
         end_str = end_date.strftime("%Y%m%d") if end_date else None
 
-        # 获取行情数据
+        # 获取不复权行情数据
         df = self.pro.daily(ts_code=code, start_date=start_str, end_date=end_str)
 
         if df.empty:
@@ -73,31 +84,36 @@ class TushareSource(BaseDataSource):
         # 转换日期格式
         df["trade_date"] = pd.to_datetime(df["trade_date"])
 
-        # 复权处理
-        if adj:
-            adj_df = self.pro.adj_factor(
-                ts_code=code, start_date=start_str, end_date=end_str
-            )
-            if not adj_df.empty:
-                df = df.merge(adj_df[["trade_date", "adj_factor"]], on="trade_date")
-                df = self._adjust_price(df, adj)
+        # 获取复权因子
+        adj_df = self.pro.adj_factor(ts_code=code, start_date=start_str, end_date=end_str)
+        if not adj_df.empty:
+            adj_df["trade_date"] = pd.to_datetime(adj_df["trade_date"])
+            df = df.merge(adj_df[["trade_date", "adj_factor"]], on="trade_date", how="left")
+            df["adj_factor"] = df["adj_factor"].fillna(1.0)
+        else:
+            df["adj_factor"] = 1.0
 
         df = df.sort_values("trade_date")
+
+        # 如果请求复权数据，动态计算
+        if adj:
+            df = self._adjust_price(df, adj)
+
         return df.reset_index(drop=True)
 
     def _adjust_price(self, df: pd.DataFrame, adj: str) -> pd.DataFrame:
-        """复权处理"""
+        """复权处理（动态计算）"""
         price_cols = ["open", "high", "low", "close"]
 
-        if adj == "qfq":
-            factor = df["adj_factor"] / df["adj_factor"].iloc[-1]
-        elif adj == "hfq":
-            factor = df["adj_factor"] / df["adj_factor"].iloc[0]
-        else:
-            return df
-
-        for col in price_cols:
-            df[col] = df[col] * factor
+        if adj == "hfq":
+            # 后复权：直接乘以复权因子
+            for col in price_cols:
+                df[col] = df[col] * df["adj_factor"]
+        elif adj == "qfq":
+            # 前复权：归一化到最新价格
+            latest_factor = df["adj_factor"].iloc[-1]
+            for col in price_cols:
+                df[col] = df[col] * df["adj_factor"] / latest_factor
 
         return df
 

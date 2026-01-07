@@ -346,35 +346,199 @@ class StockInfo:
         )
 
 
-@dataclass
-class StockDaily:
-    """日线数据"""
+# ============================================================
+# 行情数据模型（存储不复权价格）
+# ============================================================
 
-    code: str
-    trade_date: date
-    open: float
-    high: float
-    low: float
-    close: float
-    volume: float  # 成交量（股）
-    amount: float  # 成交额（元）
-    pre_close: Optional[float] = None  # 前收盘价
+
+class AdjustMethod(Enum):
+    """复权方式"""
+
+    NONE = "none"  # 不复权
+    QFQ = "qfq"  # 前复权（以最新价格为基准）
+    HFQ = "hfq"  # 后复权（以上市价格为基准）
+
+
+@dataclass
+class OHLCV:
+    """
+    OHLCV 行情数据基类
+
+    存储原则：
+    - open/high/low/close 存储【不复权】原始价格
+    - adj_factor 存储累计复权因子
+    - 使用时通过 adjusted() 方法动态计算复权价格
+
+    复权因子说明：
+    - 初始值为 1.0
+    - 发生送股/转增时，因子 = 原因子 * (1 + 送转比例)
+    - 发生配股时，因子 = 原因子 * (配股前价格) / (配股后价格)
+    """
+
+    code: str  # 证券代码
+    trade_date: date  # 交易日期
+    open: float  # 开盘价（不复权）
+    high: float  # 最高价（不复权）
+    low: float  # 最低价（不复权）
+    close: float  # 收盘价（不复权）
+    volume: float  # 成交量
+    amount: float  # 成交额
+    adj_factor: float = 1.0  # 累计复权因子
+
+    def adjusted(
+        self, method: AdjustMethod = AdjustMethod.HFQ, latest_factor: Optional[float] = None
+    ) -> "OHLCV":
+        """
+        返回复权后的副本
+
+        Args:
+            method: 复权方式
+            latest_factor: 最新复权因子（前复权时需要）
+
+        Returns:
+            复权后的新 OHLCV 对象
+        """
+        if method == AdjustMethod.NONE:
+            return self
+
+        if method == AdjustMethod.HFQ:
+            # 后复权：直接乘以复权因子
+            factor = self.adj_factor
+        elif method == AdjustMethod.QFQ:
+            # 前复权：除以最新因子，归一化到最新价格
+            if latest_factor is None:
+                raise ValueError("前复权需要提供 latest_factor")
+            factor = self.adj_factor / latest_factor
+        else:
+            factor = 1.0
+
+        return OHLCV(
+            code=self.code,
+            trade_date=self.trade_date,
+            open=self.open * factor,
+            high=self.high * factor,
+            low=self.low * factor,
+            close=self.close * factor,
+            volume=self.volume,
+            amount=self.amount,
+            adj_factor=self.adj_factor,
+        )
+
+    @property
+    def hfq_close(self) -> float:
+        """后复权收盘价"""
+        return self.close * self.adj_factor
+
+    @property
+    def vwap(self) -> float:
+        """成交量加权平均价"""
+        if self.volume > 0:
+            return self.amount / self.volume
+        return self.close
+
+    def to_dict(self) -> Dict[str, Any]:
+        """转换为字典"""
+        return {
+            "code": self.code,
+            "trade_date": self.trade_date.isoformat(),
+            "open": self.open,
+            "high": self.high,
+            "low": self.low,
+            "close": self.close,
+            "volume": self.volume,
+            "amount": self.amount,
+            "adj_factor": self.adj_factor,
+        }
+
+
+@dataclass
+class DailyBar(OHLCV):
+    """
+    日线行情数据
+
+    继承自 OHLCV，添加日线特有字段
+    """
+
+    pre_close: Optional[float] = None  # 前收盘价（不复权）
     change: Optional[float] = None  # 涨跌额
-    pct_change: Optional[float] = None  # 涨跌幅
-    turnover: Optional[float] = None  # 换手率
-    adj_factor: Optional[float] = None  # 复权因子
+    pct_change: Optional[float] = None  # 涨跌幅 (%)
+    turnover: Optional[float] = None  # 换手率 (%)
+    total_shares: Optional[float] = None  # 总股本
+    float_shares: Optional[float] = None  # 流通股本
+    total_mv: Optional[float] = None  # 总市值
+    float_mv: Optional[float] = None  # 流通市值
+
+    def adjusted(
+        self, method: AdjustMethod = AdjustMethod.HFQ, latest_factor: Optional[float] = None
+    ) -> "DailyBar":
+        """返回复权后的副本"""
+        if method == AdjustMethod.NONE:
+            return self
+
+        if method == AdjustMethod.HFQ:
+            factor = self.adj_factor
+        elif method == AdjustMethod.QFQ:
+            if latest_factor is None:
+                raise ValueError("前复权需要提供 latest_factor")
+            factor = self.adj_factor / latest_factor
+        else:
+            factor = 1.0
+
+        return DailyBar(
+            code=self.code,
+            trade_date=self.trade_date,
+            open=self.open * factor,
+            high=self.high * factor,
+            low=self.low * factor,
+            close=self.close * factor,
+            volume=self.volume,
+            amount=self.amount,
+            adj_factor=self.adj_factor,
+            pre_close=self.pre_close * factor if self.pre_close else None,
+            change=self.change * factor if self.change else None,
+            pct_change=self.pct_change,  # 涨跌幅不变
+            turnover=self.turnover,
+            total_shares=self.total_shares,
+            float_shares=self.float_shares,
+            total_mv=self.total_mv,
+            float_mv=self.float_mv,
+        )
+
+
+@dataclass
+class MinuteBar(OHLCV):
+    """
+    分钟线行情数据
+
+    注意：分钟线通常不需要复权处理
+    """
+
+    time: Optional[datetime] = None  # 具体时间（可选，trade_date + time）
+
+    def __post_init__(self):
+        # 分钟线默认不需要复权因子
+        if self.adj_factor == 1.0:
+            pass
+
+
+# ============================================================
+# 向后兼容：保留原有类名
+# ============================================================
+
+
+@dataclass
+class StockDaily(DailyBar):
+    """日线数据（向后兼容）"""
 
     @property
     def adj_close(self) -> float:
-        """后复权收盘价"""
-        if self.adj_factor:
-            return self.close * self.adj_factor
-        return self.close
+        """后复权收盘价（向后兼容）"""
+        return self.hfq_close
 
 
 @dataclass
 class StockMinute:
-    """分钟线数据"""
+    """分钟线数据（向后兼容）"""
 
     code: str
     datetime: datetime
@@ -384,6 +548,20 @@ class StockMinute:
     close: float
     volume: float
     amount: float
+
+    def to_minute_bar(self) -> MinuteBar:
+        """转换为新的 MinuteBar 类型"""
+        return MinuteBar(
+            code=self.code,
+            trade_date=self.datetime.date(),
+            open=self.open,
+            high=self.high,
+            low=self.low,
+            close=self.close,
+            volume=self.volume,
+            amount=self.amount,
+            time=self.datetime,
+        )
 
 
 @dataclass
@@ -401,6 +579,23 @@ class IndexDaily:
     pre_close: Optional[float] = None
     change: Optional[float] = None
     pct_change: Optional[float] = None
+
+    def to_daily_bar(self) -> DailyBar:
+        """转换为 DailyBar"""
+        return DailyBar(
+            code=self.code,
+            trade_date=self.trade_date,
+            open=self.open,
+            high=self.high,
+            low=self.low,
+            close=self.close,
+            volume=self.volume,
+            amount=self.amount,
+            adj_factor=1.0,  # 指数无复权
+            pre_close=self.pre_close,
+            change=self.change,
+            pct_change=self.pct_change,
+        )
 
 
 @dataclass
