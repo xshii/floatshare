@@ -26,10 +26,12 @@ class DataLoader:
         """获取数据源适配器"""
         from .sources.tushare import TushareSource
         from .sources.akshare import AKShareSource
+        from .sources.baostock import BaostockSource
 
         adapters = {
             "tushare": TushareSource,
             "akshare": AKShareSource,
+            "baostock": BaostockSource,
         }
 
         if source not in adapters:
