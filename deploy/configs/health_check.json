@@ -1,0 +1,13 @@
+{
+  "test_codes": [
+    "000001.SZ",
+    "600000.SH",
+    "600519.SH"
+  ],
+  "tushare_token": "",
+  "alert_webhook": "",
+  "alert_email": "",
+  "check_interval_minutes": 60,
+  "timeout_seconds": 30,
+  "retry_count": 2
+}

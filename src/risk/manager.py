@@ -3,10 +3,10 @@
 from typing import Dict, List, Optional, Any
 from dataclasses import dataclass
 
-from .limits import RiskLimits
-from .exposure import ExposureCalculator
-from ..execution.order import Order
-from ..execution.position import PositionDetail
+from src.risk.limits import RiskLimits
+from src.risk.exposure import ExposureCalculator
+from src.execution.order import Order
+from src.execution.position import PositionDetail
 
 
 @dataclass

@@ -1,0 +1,15 @@
+[Unit]
+Description=FloatShare Health Check Timer
+Requires=floatshare-health.service
+
+[Timer]
+# 每小时运行一次
+OnCalendar=hourly
+# 启动后5分钟运行第一次
+OnBootSec=5min
+# 随机延迟，避免同时请求
+RandomizedDelaySec=60
+Persistent=true
+
+[Install]
+WantedBy=timers.target

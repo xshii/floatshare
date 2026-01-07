@@ -4,7 +4,7 @@ from typing import List, Dict, Optional, Callable
 import pandas as pd
 import numpy as np
 
-from ..base import Signal
+from src.strategy.base import Signal
 
 
 class SignalGenerator:

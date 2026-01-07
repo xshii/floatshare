@@ -1,7 +1,7 @@
 """策略注册中心"""
 
 from typing import Dict, Type, Optional, List
-from .base import Strategy
+from src.strategy.base import Strategy
 
 
 class StrategyRegistry:

@@ -5,7 +5,7 @@ from dataclasses import dataclass
 import pandas as pd
 import numpy as np
 
-from ..execution.position import PositionDetail
+from src.execution.position import PositionDetail
 
 
 @dataclass

@@ -4,7 +4,7 @@ from typing import Optional, Dict, Any
 import pandas as pd
 import numpy as np
 
-from .base import Factor
+from src.strategy.factors.base import Factor
 
 
 class PEFactor(Factor):
