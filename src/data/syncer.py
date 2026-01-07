@@ -741,6 +741,15 @@ class DataSyncer:
         max_retries: int,
     ) -> Dict[str, Any]:
         """执行同步"""
+        import time as _time
+        sync_start_time = _time.time()
+
+        logger.info("=" * 50)
+        logger.info(f"开始同步任务: {state.session_id}")
+        logger.info(f"数据源: {self.source}, 日期范围: {start_date} ~ {end_date}")
+        logger.info(f"待同步: {state.total_tasks} 只股票")
+        logger.info("=" * 50)
+
         completed = 0
         failed = 0
         skipped = 0
@@ -831,18 +840,37 @@ class DataSyncer:
         # 最终保存状态
         self._save_state(state)
 
+        # 计算耗时
+        sync_elapsed = _time.time() - sync_start_time
+        sync_minutes = sync_elapsed / 60
+
         result = {
             "total": state.total_tasks,
             "completed": completed,
             "failed": failed,
             "skipped": skipped,
             "total_rows": total_rows,
+            "elapsed_seconds": sync_elapsed,
             "state_file": str(self.state_path),
         }
 
         # 多数据源模式下，附带健康报告
         if self.multi_source and self.source_pool:
             result["source_health"] = self.source_pool.get_health_report()
+
+        # 输出同步结束汇总日志
+        logger.info("=" * 50)
+        logger.info("同步任务完成")
+        logger.info(f"会话ID: {state.session_id}")
+        logger.info(f"耗时: {sync_minutes:.1f} 分钟 ({sync_elapsed:.0f} 秒)")
+        logger.info(f"成功: {completed}, 失败: {failed}, 跳过: {skipped}")
+        logger.info(f"新增数据: {total_rows} 条")
+        if completed > 0:
+            avg_time = sync_elapsed / completed
+            logger.info(f"平均每只: {avg_time:.2f} 秒")
+        if failed > 0:
+            logger.warning(f"有 {failed} 只股票同步失败，请检查日志")
+        logger.info("=" * 50)
 
         return result
 
@@ -866,9 +894,11 @@ class DataSyncer:
             db_latest = self.storage.get_latest_date(code)
             if db_latest:
                 actual_start = db_latest + timedelta(days=1)
+                logger.debug(f"{code} 数据库最新日期: {db_latest}, 从 {actual_start} 开始增量同步")
 
         # 如果已是最新，跳过
         if actual_start > end_date:
+            logger.debug(f"{code} 已是最新，跳过")
             return 0
 
         # 获取数据（支持多数据源）
@@ -876,13 +906,15 @@ class DataSyncer:
             df, used_source = self.source_pool.fetch_daily(
                 code=code, start_date=actual_start, end_date=end_date, adj=None
             )
-            logger.debug(f"{code} 数据来自 {used_source}")
+            logger.debug(f"{code} 数据来自 {used_source}, 获取 {len(df)} 条")
         else:
             df = self.loader.get_daily(
                 code=code, start_date=actual_start, end_date=end_date, adj=None
             )
+            logger.debug(f"{code} 获取 {len(df)} 条数据")
 
         if df.empty:
+            logger.debug(f"{code} 无新数据")
             return 0
 
         # 确保有必要的列
@@ -900,6 +932,21 @@ class DataSyncer:
             df["trade_date"] = pd.to_datetime(df["trade_date"])
 
         df["trade_date"] = df["trade_date"].dt.strftime("%Y-%m-%d")
+
+        # 数据校验
+        from src.data.validator import DataValidator
+        validator = DataValidator(max_pct_change=22.0)
+        df, validation_result = validator.filter_valid(df, code)
+
+        if validation_result.rows_invalid > 0:
+            logger.warning(
+                f"{code} 过滤异常数据: {validation_result.rows_invalid} 条 "
+                f"(剩余 {len(df)} 条)"
+            )
+
+        if df.empty:
+            logger.debug(f"{code} 校验后无有效数据")
+            return 0
 
         # 选择需要的列
         save_cols = [
