@@ -14,7 +14,7 @@ from .models import (
 )
 from .loader import DataLoader
 from .cleaner import DataCleaner
-from .syncer import DataSyncer, SyncPriority
+from .syncer import DataSyncer, SyncPriority, SourcePool, SourceHealth
 
 __all__ = [
     # 数据模型
@@ -35,4 +35,6 @@ __all__ = [
     # 数据同步
     "DataSyncer",
     "SyncPriority",
+    "SourcePool",
+    "SourceHealth",
 ]

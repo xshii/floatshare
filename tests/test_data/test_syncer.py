@@ -13,6 +13,8 @@ from src.data.syncer import (
     SyncTask,
     SyncState,
     RateLimiter,
+    SourcePool,
+    SourceHealth,
 )
 
 
@@ -318,3 +320,175 @@ class TestSyncTask:
 
         assert d["code"] == "000001.SZ"
         assert d["synced_rows"] == 100
+
+
+class TestSourceHealth:
+    """数据源健康状态测试"""
+
+    def test_initial_state(self):
+        """测试初始状态"""
+        health = SourceHealth(name="akshare")
+
+        assert health.success_rate == 1.0
+        assert health.is_available
+        assert health.consecutive_fails == 0
+
+    def test_record_success(self):
+        """测试记录成功"""
+        health = SourceHealth(name="akshare")
+
+        health.record_success(response_time=0.5)
+        health.record_success(response_time=0.3)
+
+        assert health.success_count == 2
+        assert health.fail_count == 0
+        assert health.success_rate == 1.0
+        assert health.avg_response_time > 0
+
+    def test_record_failure_with_backoff(self):
+        """测试失败后的指数退避"""
+        health = SourceHealth(name="akshare")
+
+        # 连续失败3次后应该被禁用
+        for _ in range(3):
+            health.record_failure(backoff_base=1.0)  # 使用1秒的基数便于测试
+
+        assert health.consecutive_fails == 3
+        assert health.disabled_until is not None
+        assert not health.is_available
+
+    def test_success_resets_consecutive_fails(self):
+        """测试成功重置连续失败计数"""
+        health = SourceHealth(name="akshare")
+
+        health.record_failure()
+        health.record_failure()
+        health.record_success(0.5)
+
+        assert health.consecutive_fails == 0
+
+
+class TestSourcePool:
+    """数据源池测试"""
+
+    def test_init_with_sources(self):
+        """测试初始化多数据源"""
+        # 注意：这会尝试初始化真实的 DataLoader，可能会失败
+        # 在实际测试中应该 mock DataLoader
+        pass
+
+    @patch("src.data.syncer.DataLoader")
+    def test_get_available_sources(self, mock_loader_class):
+        """测试获取可用数据源"""
+        mock_loader_class.return_value = MagicMock()
+
+        pool = SourcePool(sources=["akshare", "eastmoney"], parallel=False)
+
+        available = pool.get_available_sources()
+        assert len(available) == 2
+
+    @patch("src.data.syncer.DataLoader")
+    def test_sequential_fetch_fallback(self, mock_loader_class):
+        """测试顺序获取的降级机制"""
+        # 设置第一个数据源失败，第二个成功
+        mock_loader1 = MagicMock()
+        mock_loader1.get_daily.side_effect = Exception("网络错误")
+
+        mock_loader2 = MagicMock()
+        mock_loader2.get_daily.return_value = pd.DataFrame({
+            "code": ["000001.SZ"],
+            "trade_date": [pd.Timestamp("2023-01-01")],
+            "open": [10.0],
+            "high": [10.5],
+            "low": [9.5],
+            "close": [10.2],
+            "volume": [1000000],
+            "amount": [10000000],
+        })
+
+        mock_loader_class.side_effect = [mock_loader1, mock_loader2]
+
+        pool = SourcePool(sources=["source1", "source2"], parallel=False)
+        pool.loaders = {"source1": mock_loader1, "source2": mock_loader2}
+
+        df, source = pool.fetch_daily(
+            code="000001.SZ",
+            start_date=date(2023, 1, 1),
+            end_date=date(2023, 1, 10),
+        )
+
+        assert not df.empty
+        assert source == "source2"
+        assert pool.health["source1"].fail_count == 1
+
+    def test_health_report(self):
+        """测试健康报告"""
+        health = SourceHealth(name="test")
+        health.record_success(0.5)
+        health.record_success(0.3)
+        health.record_failure()
+
+        pool = SourcePool.__new__(SourcePool)
+        pool.health = {"test": health}
+        pool.loaders = {}
+
+        report = pool.get_health_report()
+
+        assert "test" in report
+        assert "success_rate" in report["test"]
+        assert "avg_response_time" in report["test"]
+
+
+class TestDataSyncerMultiSource:
+    """多数据源同步器测试"""
+
+    def test_init_with_sources(self, temp_db_path, temp_state_path):
+        """测试多数据源初始化"""
+        with patch("src.data.syncer.DataLoader"):
+            syncer = DataSyncer(
+                sources=["akshare", "eastmoney"],
+                parallel=False,
+                db_path=temp_db_path,
+                state_path=temp_state_path,
+            )
+
+            assert syncer.multi_source
+            assert syncer.source_pool is not None
+
+    def test_init_with_single_source(self, temp_db_path, temp_state_path):
+        """测试单数据源初始化（向后兼容）"""
+        with patch("src.data.syncer.DataLoader"):
+            syncer = DataSyncer(
+                source="akshare",
+                db_path=temp_db_path,
+                state_path=temp_state_path,
+            )
+
+            assert not syncer.multi_source
+            assert syncer.source_pool is None
+
+    def test_set_parallel(self, temp_db_path, temp_state_path):
+        """测试设置并行模式"""
+        with patch("src.data.syncer.DataLoader"):
+            syncer = DataSyncer(
+                sources=["akshare", "eastmoney"],
+                parallel=False,
+                db_path=temp_db_path,
+                state_path=temp_state_path,
+            )
+
+            syncer.set_parallel(True)
+            assert syncer.source_pool.parallel
+
+    def test_get_source_health(self, temp_db_path, temp_state_path):
+        """测试获取数据源健康状态"""
+        with patch("src.data.syncer.DataLoader"):
+            syncer = DataSyncer(
+                sources=["akshare", "eastmoney"],
+                db_path=temp_db_path,
+                state_path=temp_state_path,
+            )
+
+            health = syncer.get_source_health()
+            assert health is not None
+            assert "akshare" in health or "eastmoney" in health

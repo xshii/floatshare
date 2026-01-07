@@ -5,15 +5,17 @@
 - 增量同步（只获取缺失数据）
 - 进度追踪（支持多日中断恢复）
 - 速率控制（防止被封禁）
+- 多数据源自动降级/并行获取
 """
 
 import json
 import time
 import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime, timedelta
 from enum import Enum
 from pathlib import Path
-from typing import List, Optional, Dict, Any, Callable
+from typing import List, Optional, Dict, Any, Callable, Tuple
 from dataclasses import dataclass, field, asdict
 
 import pandas as pd
@@ -22,6 +24,243 @@ from .loader import DataLoader
 from .storage.database import DatabaseStorage
 
 logger = logging.getLogger(__name__)
+
+
+# ============================================================
+# 多数据源管理
+# ============================================================
+
+
+@dataclass
+class SourceHealth:
+    """数据源健康状态"""
+
+    name: str
+    success_count: int = 0
+    fail_count: int = 0
+    consecutive_fails: int = 0
+    last_fail_time: Optional[float] = None
+    disabled_until: Optional[float] = None  # 禁用到什么时候
+    avg_response_time: float = 0.0  # 平均响应时间
+
+    @property
+    def success_rate(self) -> float:
+        """成功率"""
+        total = self.success_count + self.fail_count
+        return self.success_count / total if total > 0 else 1.0
+
+    @property
+    def is_available(self) -> bool:
+        """是否可用"""
+        if self.disabled_until is None:
+            return True
+        return time.time() >= self.disabled_until
+
+    def record_success(self, response_time: float) -> None:
+        """记录成功"""
+        self.success_count += 1
+        self.consecutive_fails = 0
+        # 更新平均响应时间（滑动平均）
+        if self.avg_response_time == 0:
+            self.avg_response_time = response_time
+        else:
+            self.avg_response_time = 0.9 * self.avg_response_time + 0.1 * response_time
+
+    def record_failure(self, backoff_base: float = 60.0) -> None:
+        """记录失败，指数退避"""
+        self.fail_count += 1
+        self.consecutive_fails += 1
+        self.last_fail_time = time.time()
+
+        # 连续失败达到阈值，临时禁用
+        if self.consecutive_fails >= 3:
+            # 指数退避：60s, 120s, 240s, ...
+            backoff = backoff_base * (2 ** (self.consecutive_fails - 3))
+            backoff = min(backoff, 3600)  # 最多禁用1小时
+            self.disabled_until = time.time() + backoff
+            logger.warning(
+                f"数据源 {self.name} 连续失败 {self.consecutive_fails} 次，"
+                f"禁用 {backoff:.0f} 秒"
+            )
+
+
+class SourcePool:
+    """数据源池 - 管理多个数据源，支持自动降级和并行获取"""
+
+    def __init__(
+        self,
+        sources: Optional[List[str]] = None,
+        parallel: bool = False,
+        max_workers: int = 3,
+    ):
+        """
+        Args:
+            sources: 数据源列表，按优先级排序，如 ["akshare", "tushare", "eastmoney"]
+            parallel: 是否并行获取
+            max_workers: 并行时的最大工作线程数
+        """
+        if sources is None:
+            sources = ["akshare", "eastmoney"]  # 默认数据源
+
+        self.sources = sources
+        self.parallel = parallel
+        self.max_workers = max_workers
+
+        # 初始化数据源加载器和健康状态
+        self.loaders: Dict[str, DataLoader] = {}
+        self.health: Dict[str, SourceHealth] = {}
+
+        for source in sources:
+            try:
+                self.loaders[source] = DataLoader(source=source)
+                self.health[source] = SourceHealth(name=source)
+            except Exception as e:
+                logger.warning(f"初始化数据源 {source} 失败: {e}")
+
+    def get_available_sources(self) -> List[str]:
+        """获取可用的数据源列表（按健康度排序）"""
+        available = [
+            name for name, h in self.health.items()
+            if h.is_available and name in self.loaders
+        ]
+
+        # 按成功率和响应时间排序
+        def score(name: str) -> Tuple[float, float]:
+            h = self.health[name]
+            return (-h.success_rate, h.avg_response_time)
+
+        return sorted(available, key=score)
+
+    def fetch_daily(
+        self,
+        code: str,
+        start_date: date,
+        end_date: date,
+        adj: Optional[str] = None,
+    ) -> Tuple[pd.DataFrame, str]:
+        """
+        获取日线数据
+
+        Args:
+            code: 股票代码
+            start_date: 开始日期
+            end_date: 结束日期
+            adj: 复权方式
+
+        Returns:
+            (DataFrame, 数据源名称)
+        """
+        if self.parallel:
+            return self._fetch_parallel(code, start_date, end_date, adj)
+        else:
+            return self._fetch_sequential(code, start_date, end_date, adj)
+
+    def _fetch_sequential(
+        self,
+        code: str,
+        start_date: date,
+        end_date: date,
+        adj: Optional[str],
+    ) -> Tuple[pd.DataFrame, str]:
+        """顺序获取（自动降级）"""
+        sources = self.get_available_sources()
+
+        if not sources:
+            raise RuntimeError("所有数据源均不可用")
+
+        last_error = None
+        for source in sources:
+            loader = self.loaders[source]
+            health = self.health[source]
+
+            try:
+                start_time = time.time()
+                df = loader.get_daily(
+                    code=code,
+                    start_date=start_date,
+                    end_date=end_date,
+                    adj=adj,
+                )
+                elapsed = time.time() - start_time
+
+                if not df.empty:
+                    health.record_success(elapsed)
+                    return df, source
+
+                # 空数据不算失败，可能是该股票确实没数据
+                return df, source
+
+            except Exception as e:
+                health.record_failure()
+                last_error = e
+                logger.warning(f"数据源 {source} 获取 {code} 失败: {e}")
+                continue
+
+        # 所有数据源都失败
+        raise RuntimeError(f"所有数据源获取失败: {last_error}")
+
+    def _fetch_parallel(
+        self,
+        code: str,
+        start_date: date,
+        end_date: date,
+        adj: Optional[str],
+    ) -> Tuple[pd.DataFrame, str]:
+        """并行获取（取最快返回的有效结果）"""
+        sources = self.get_available_sources()
+
+        if not sources:
+            raise RuntimeError("所有数据源均不可用")
+
+        def fetch_from_source(source: str) -> Tuple[pd.DataFrame, str, float]:
+            loader = self.loaders[source]
+            start_time = time.time()
+            df = loader.get_daily(
+                code=code,
+                start_date=start_date,
+                end_date=end_date,
+                adj=adj,
+            )
+            elapsed = time.time() - start_time
+            return df, source, elapsed
+
+        with ThreadPoolExecutor(max_workers=min(len(sources), self.max_workers)) as executor:
+            futures = {
+                executor.submit(fetch_from_source, source): source
+                for source in sources
+            }
+
+            for future in as_completed(futures):
+                source = futures[future]
+                try:
+                    df, src, elapsed = future.result()
+                    if not df.empty:
+                        self.health[src].record_success(elapsed)
+                        # 取消其他任务
+                        for f in futures:
+                            f.cancel()
+                        return df, src
+                except Exception as e:
+                    self.health[source].record_failure()
+                    logger.warning(f"数据源 {source} 并行获取 {code} 失败: {e}")
+                    continue
+
+        # 所有都失败了，尝试返回空 DataFrame
+        return pd.DataFrame(), sources[0] if sources else "unknown"
+
+    def get_health_report(self) -> Dict[str, Dict[str, Any]]:
+        """获取健康报告"""
+        return {
+            name: {
+                "success_rate": f"{h.success_rate:.1%}",
+                "success_count": h.success_count,
+                "fail_count": h.fail_count,
+                "consecutive_fails": h.consecutive_fails,
+                "avg_response_time": f"{h.avg_response_time:.2f}s",
+                "is_available": h.is_available,
+            }
+            for name, h in self.health.items()
+        }
 
 
 class SyncPriority(Enum):
@@ -119,18 +358,38 @@ class DataSyncer:
 
     def __init__(
         self,
-        source: str = "akshare",
+        source: Optional[str] = None,
+        sources: Optional[List[str]] = None,
+        parallel: bool = False,
         db_path: Optional[str] = None,
         state_path: Optional[str] = None,
     ):
         """
         Args:
-            source: 数据源（akshare/tushare）
+            source: 单数据源（向后兼容）
+            sources: 多数据源列表，按优先级排序，如 ["akshare", "tushare", "eastmoney"]
+            parallel: 是否并行获取（多数据源模式）
             db_path: 数据库路径
             state_path: 状态文件路径
         """
-        self.source = source
-        self.loader = DataLoader(source=source)
+        # 处理数据源配置
+        if sources is not None:
+            # 多数据源模式
+            self.source = sources[0]
+            self.source_pool = SourcePool(sources=sources, parallel=parallel)
+            self.multi_source = True
+        elif source is not None:
+            # 单数据源模式（向后兼容）
+            self.source = source
+            self.loader = DataLoader(source=source)
+            self.source_pool = None
+            self.multi_source = False
+        else:
+            # 默认：多数据源模式
+            self.source = "akshare"
+            self.source_pool = SourcePool(sources=["akshare", "eastmoney"], parallel=parallel)
+            self.multi_source = True
+
         self.storage = DatabaseStorage(db_path=db_path)
 
         # 状态文件路径
@@ -477,7 +736,7 @@ class DataSyncer:
         # 最终保存状态
         self._save_state(state)
 
-        return {
+        result = {
             "total": state.total_tasks,
             "completed": completed,
             "failed": failed,
@@ -485,6 +744,12 @@ class DataSyncer:
             "total_rows": total_rows,
             "state_file": str(self.state_path),
         }
+
+        # 多数据源模式下，附带健康报告
+        if self.multi_source and self.source_pool:
+            result["source_health"] = self.source_pool.get_health_report()
+
+        return result
 
     def _sync_single_stock(
         self,
@@ -511,10 +776,16 @@ class DataSyncer:
         if actual_start > end_date:
             return 0
 
-        # 获取数据
-        df = self.loader.get_daily(
-            code=code, start_date=actual_start, end_date=end_date, adj=None
-        )
+        # 获取数据（支持多数据源）
+        if self.multi_source and self.source_pool:
+            df, used_source = self.source_pool.fetch_daily(
+                code=code, start_date=actual_start, end_date=end_date, adj=None
+            )
+            logger.debug(f"{code} 数据来自 {used_source}")
+        else:
+            df = self.loader.get_daily(
+                code=code, start_date=actual_start, end_date=end_date, adj=None
+            )
 
         if df.empty:
             return 0
@@ -651,3 +922,15 @@ class DataSyncer:
             }
         except Exception:
             return None
+
+    def get_source_health(self) -> Optional[Dict[str, Dict[str, Any]]]:
+        """获取数据源健康状态（仅多数据源模式）"""
+        if self.multi_source and self.source_pool:
+            return self.source_pool.get_health_report()
+        return None
+
+    def set_parallel(self, parallel: bool = True) -> "DataSyncer":
+        """设置是否并行获取"""
+        if self.source_pool:
+            self.source_pool.parallel = parallel
+        return self
