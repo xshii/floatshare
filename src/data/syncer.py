@@ -21,8 +21,8 @@ from dataclasses import dataclass, field, asdict
 
 import pandas as pd
 
-from .loader import DataLoader
-from .storage.database import DatabaseStorage
+from src.data.loader import DataLoader
+from src.data.storage.database import DatabaseStorage
 
 logger = logging.getLogger(__name__)
 

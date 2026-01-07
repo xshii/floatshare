@@ -1,7 +1,7 @@
 """风险管理系统"""
 
-from .manager import RiskManager
-from .limits import RiskLimits
-from .exposure import ExposureCalculator
+from src.risk.manager import RiskManager
+from src.risk.limits import RiskLimits
+from src.risk.exposure import ExposureCalculator
 
 __all__ = ["RiskManager", "RiskLimits", "ExposureCalculator"]

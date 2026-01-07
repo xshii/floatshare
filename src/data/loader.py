@@ -6,7 +6,7 @@ from typing import List, Optional, Dict, Any
 
 import pandas as pd
 
-from .models import StockDaily, StockInfo
+from src.data.models import StockDaily, StockInfo
 
 
 class DataLoader:

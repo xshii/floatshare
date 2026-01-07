@@ -1,6 +1,6 @@
 """数据管理系统"""
 
-from .models import (
+from src.data.models import (
     StockDaily,
     StockInfo,
     StockMinute,
@@ -12,9 +12,9 @@ from .models import (
     AssetType,
     AdjustMethod,
 )
-from .loader import DataLoader
-from .cleaner import DataCleaner
-from .syncer import DataSyncer, SyncPriority, SourcePool, SourceHealth, ProxyPool
+from src.data.loader import DataLoader
+from src.data.cleaner import DataCleaner
+from src.data.syncer import DataSyncer, SyncPriority, SourcePool, SourceHealth, ProxyPool
 
 __all__ = [
     # 数据模型

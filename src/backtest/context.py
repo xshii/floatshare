@@ -4,8 +4,8 @@ from dataclasses import dataclass, field
 from datetime import date
 from typing import Dict, Optional
 
-from ..strategy.base import StrategyContext
-from ..account.portfolio import Position
+from src.strategy.base import StrategyContext
+from src.account.portfolio import Position
 
 
 @dataclass

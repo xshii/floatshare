@@ -1,6 +1,6 @@
 """数据源适配器"""
 
-from .tushare import TushareSource
-from .akshare import AKShareSource
+from src.data.sources.tushare import TushareSource
+from src.data.sources.akshare import AKShareSource
 
 __all__ = ["TushareSource", "AKShareSource"]

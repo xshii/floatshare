@@ -4,7 +4,7 @@ from datetime import date
 from typing import List, Optional
 import pandas as pd
 
-from ..loader import BaseDataSource
+from src.data.loader import BaseDataSource
 from config.settings import settings
 
 

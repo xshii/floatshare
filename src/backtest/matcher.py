@@ -3,7 +3,7 @@
 from typing import Optional
 import pandas as pd
 
-from ..execution.order import Order, OrderStatus
+from src.execution.order import Order, OrderStatus
 from config.trading import TradingConfig, Direction
 
 

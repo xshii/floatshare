@@ -3,8 +3,8 @@
 from abc import ABC, abstractmethod
 from typing import List, Optional, Dict, Any
 
-from ..order import Order
-from ..position import PositionDetail
+from src.execution.order import Order
+from src.execution.position import PositionDetail
 
 
 class BaseBroker(ABC):
