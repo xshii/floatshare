@@ -98,3 +98,105 @@ def sample_portfolio():
     portfolio.update_price("000002.SZ", 19.0)
 
     return portfolio
+
+
+@pytest.fixture
+def sample_daily_with_adj() -> pd.DataFrame:
+    """生成包含复权因子的日线数据（模拟送股除权）"""
+    dates = pd.date_range("2023-01-01", periods=100, freq="B")
+    n = len(dates)
+
+    np.random.seed(42)
+
+    # 基础价格序列
+    base_price = 20.0
+    returns = np.random.randn(n) * 0.02
+    prices = base_price * np.exp(np.cumsum(returns))
+
+    # 模拟在第50天发生10送5（1:1.5拆分）
+    adj_factor = np.ones(n)
+    split_idx = 50
+    adj_factor[:split_idx] = 1.0
+    adj_factor[split_idx:] = 1.5  # 除权后复权因子变大
+
+    # 不复权价格需要在除权日后除以1.5
+    unadj_prices = prices.copy()
+    unadj_prices[split_idx:] = prices[split_idx:] / 1.5
+
+    df = pd.DataFrame({
+        "code": "000001.SZ",
+        "trade_date": dates,
+        "open": unadj_prices * (1 + np.random.randn(n) * 0.005),
+        "high": unadj_prices * (1 + np.abs(np.random.randn(n) * 0.01)),
+        "low": unadj_prices * (1 - np.abs(np.random.randn(n) * 0.01)),
+        "close": unadj_prices,
+        "volume": np.random.randint(100000, 1000000, n),
+        "amount": unadj_prices * np.random.randint(100000, 1000000, n),
+        "adj_factor": adj_factor,
+    })
+
+    return df
+
+
+@pytest.fixture
+def sample_dividend_data() -> pd.DataFrame:
+    """生成分红送股数据"""
+    data = [
+        {
+            "code": "000001.SZ",
+            "ex_date": date(2023, 6, 15),
+            "record_date": date(2023, 6, 14),
+            "pay_date": date(2023, 6, 16),
+            "cash_div": 0.5,  # 每股0.5元
+            "bonus_ratio": 0.0,
+            "transfer_ratio": 0.5,  # 10转5
+            "report_period": "2022-12-31",
+        },
+        {
+            "code": "000001.SZ",
+            "ex_date": date(2022, 6, 20),
+            "record_date": date(2022, 6, 17),
+            "pay_date": date(2022, 6, 21),
+            "cash_div": 0.3,
+            "bonus_ratio": 0.0,
+            "transfer_ratio": 0.0,
+            "report_period": "2021-12-31",
+        },
+        {
+            "code": "000002.SZ",
+            "ex_date": date(2023, 5, 10),
+            "record_date": date(2023, 5, 9),
+            "pay_date": date(2023, 5, 11),
+            "cash_div": 0.8,
+            "bonus_ratio": 0.3,  # 10送3
+            "transfer_ratio": 0.0,
+            "report_period": "2022-12-31",
+        },
+    ]
+    return pd.DataFrame(data)
+
+
+@pytest.fixture
+def sample_stock_list() -> pd.DataFrame:
+    """生成股票列表数据"""
+    data = [
+        {"code": "000001.SZ", "ticker": "000001", "name": "平安银行", "market": "SZ", "industry": "银行"},
+        {"code": "000002.SZ", "ticker": "000002", "name": "万科A", "market": "SZ", "industry": "房地产"},
+        {"code": "600000.SH", "ticker": "600000", "name": "浦发银行", "market": "SH", "industry": "银行"},
+        {"code": "600036.SH", "ticker": "600036", "name": "招商银行", "market": "SH", "industry": "银行"},
+        {"code": "000858.SZ", "ticker": "000858", "name": "五粮液", "market": "SZ", "industry": "白酒"},
+        {"code": "600519.SH", "ticker": "600519", "name": "贵州茅台", "market": "SH", "industry": "白酒"},
+    ]
+    return pd.DataFrame(data)
+
+
+@pytest.fixture
+def temp_db_path(tmp_path) -> str:
+    """生成临时数据库路径"""
+    return str(tmp_path / "test.db")
+
+
+@pytest.fixture
+def temp_state_path(tmp_path) -> str:
+    """生成临时状态文件路径"""
+    return str(tmp_path / "sync_state.json")
