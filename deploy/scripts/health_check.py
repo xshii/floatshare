@@ -111,14 +111,10 @@ class DataSourceHealthChecker:
                 ))
                 logger.error(f"[akshare] 股票列表失败: {e}")
 
-            # 检查2: 日线数据 (多接口尝试)
+            # 检查2: 日线数据
             for code in self.test_codes[:1]:
                 ticker = code.split(".")[0]
                 start = time.time()
-                success = False
-                last_error = None
-
-                # 尝试方法1: stock_zh_a_hist (东方财富)
                 try:
                     end_date = date.today()
                     start_date = end_date - timedelta(days=7)
@@ -138,38 +134,15 @@ class DataSourceHealthChecker:
                         data_count=len(df),
                     ))
                     logger.info(f"[akshare] 日线 {code}: {len(df)} 条, {elapsed:.2f}s")
-                    success = True
                 except Exception as e:
-                    last_error = e
-                    logger.warning(f"[akshare] 日线 {code} 方法1失败: {e}")
-
-                # 尝试方法2: stock_zh_a_hist_min_em (如果方法1失败)
-                if not success:
-                    try:
-                        df = ak.stock_zh_a_hist_min_em(symbol=ticker, period="1", adjust="")
-                        elapsed = time.time() - start
-                        results.append(CheckResult(
-                            source="akshare",
-                            check_type=f"daily_{code}",
-                            success=True,
-                            response_time=elapsed,
-                            data_count=len(df),
-                        ))
-                        logger.info(f"[akshare] 日线(分钟替代) {code}: {len(df)} 条, {elapsed:.2f}s")
-                        success = True
-                    except Exception as e2:
-                        last_error = e2
-                        logger.warning(f"[akshare] 日线 {code} 方法2失败: {e2}")
-
-                if not success:
                     results.append(CheckResult(
                         source="akshare",
                         check_type=f"daily_{code}",
                         success=False,
                         response_time=time.time() - start,
-                        error=str(last_error),
+                        error=str(e),
                     ))
-                    logger.error(f"[akshare] 日线 {code} 全部方法失败: {last_error}")
+                    logger.error(f"[akshare] 日线 {code} 失败: {e}")
 
             # 检查3: 实时行情 (如果股票列表已成功获取，复用数据)
             if realtime_done and realtime_df is not None:
