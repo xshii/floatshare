@@ -5,6 +5,29 @@ from typing import Dict, List, Optional
 from datetime import date, datetime
 
 
+class FlowType:
+    """资金流水类型"""
+    DEPOSIT = "deposit"          # 入金
+    WITHDRAW = "withdraw"        # 出金
+    DIVIDEND = "dividend"        # 现金分红
+    TAX = "tax"                  # 扣税（红利税等）
+    INTEREST = "interest"        # 利息收入
+    COMMISSION = "commission"    # 手续费
+    TRANSFER_FEE = "transfer"    # 过户费
+    STAMP_TAX = "stamp"          # 印花税
+
+
+@dataclass
+class CashFlow:
+    """资金流水"""
+
+    date: datetime
+    amount: float  # 正数收入，负数支出
+    flow_type: str  # 流水类型，见 FlowType
+    code: str = ""  # 关联股票代码（分红、扣税时使用）
+    note: str = ""
+
+
 @dataclass
 class Position:
     """持仓"""
@@ -46,6 +69,7 @@ class Portfolio:
     initial_capital: float = 1_000_000
     cash: float = field(default=0.0)
     positions: Dict[str, Position] = field(default_factory=dict)
+    cash_flows: List[CashFlow] = field(default_factory=list)
     created_at: datetime = field(default_factory=datetime.now)
 
     def __post_init__(self):
@@ -159,3 +183,241 @@ class Portfolio:
         """重置组合"""
         self.cash = self.initial_capital
         self.positions.clear()
+        self.cash_flows.clear()
+
+    # ============================================================
+    # 资金流水
+    # ============================================================
+
+    def deposit(self, amount: float, note: str = "") -> CashFlow:
+        """
+        入金
+
+        Args:
+            amount: 入金金额（必须为正数）
+            note: 备注
+
+        Returns:
+            资金流水记录
+        """
+        if amount <= 0:
+            raise ValueError("入金金额必须为正数")
+
+        flow = CashFlow(
+            date=datetime.now(),
+            amount=amount,
+            flow_type=FlowType.DEPOSIT,
+            note=note,
+        )
+        self.cash += amount
+        self.cash_flows.append(flow)
+        return flow
+
+    def withdraw(self, amount: float, note: str = "") -> CashFlow:
+        """
+        出金
+
+        Args:
+            amount: 出金金额（必须为正数）
+            note: 备注
+
+        Returns:
+            资金流水记录
+
+        Raises:
+            ValueError: 金额无效或余额不足
+        """
+        if amount <= 0:
+            raise ValueError("出金金额必须为正数")
+        if amount > self.cash:
+            raise ValueError(f"余额不足，当前可用: {self.cash:.2f}")
+
+        flow = CashFlow(
+            date=datetime.now(),
+            amount=-amount,  # 负数表示出金
+            flow_type=FlowType.WITHDRAW,
+            note=note,
+        )
+        self.cash -= amount
+        self.cash_flows.append(flow)
+        return flow
+
+    def receive_dividend(
+        self,
+        code: str,
+        amount: float,
+        tax: float = 0.0,
+        note: str = "",
+    ) -> List[CashFlow]:
+        """
+        收到分红
+
+        Args:
+            code: 股票代码
+            amount: 分红金额（税前）
+            tax: 红利税
+            note: 备注
+
+        Returns:
+            资金流水记录列表（分红+扣税）
+        """
+        if amount <= 0:
+            raise ValueError("分红金额必须为正数")
+
+        flows = []
+
+        # 分红收入
+        dividend_flow = CashFlow(
+            date=datetime.now(),
+            amount=amount,
+            flow_type=FlowType.DIVIDEND,
+            code=code,
+            note=note or f"{code} 分红",
+        )
+        flows.append(dividend_flow)
+        self.cash += amount
+
+        # 扣税
+        if tax > 0:
+            tax_flow = CashFlow(
+                date=datetime.now(),
+                amount=-tax,
+                flow_type=FlowType.TAX,
+                code=code,
+                note=f"{code} 红利税",
+            )
+            flows.append(tax_flow)
+            self.cash -= tax
+
+        self.cash_flows.extend(flows)
+        return flows
+
+    def deduct_tax(self, code: str, amount: float, note: str = "") -> CashFlow:
+        """
+        扣税（补扣红利税等）
+
+        Args:
+            code: 关联股票代码
+            amount: 扣税金额（正数）
+            note: 备注
+
+        Returns:
+            资金流水记录
+        """
+        if amount <= 0:
+            raise ValueError("扣税金额必须为正数")
+
+        flow = CashFlow(
+            date=datetime.now(),
+            amount=-amount,
+            flow_type=FlowType.TAX,
+            code=code,
+            note=note or f"{code} 扣税",
+        )
+        self.cash -= amount
+        self.cash_flows.append(flow)
+        return flow
+
+    def add_fee(
+        self,
+        amount: float,
+        flow_type: str = FlowType.COMMISSION,
+        code: str = "",
+        note: str = "",
+    ) -> CashFlow:
+        """
+        扣除费用（手续费、过户费、印花税等）
+
+        Args:
+            amount: 费用金额（正数）
+            flow_type: 费用类型
+            code: 关联股票代码
+            note: 备注
+
+        Returns:
+            资金流水记录
+        """
+        if amount <= 0:
+            raise ValueError("费用金额必须为正数")
+
+        flow = CashFlow(
+            date=datetime.now(),
+            amount=-amount,
+            flow_type=flow_type,
+            code=code,
+            note=note,
+        )
+        self.cash -= amount
+        self.cash_flows.append(flow)
+        return flow
+
+    def add_interest(self, amount: float, note: str = "") -> CashFlow:
+        """
+        利息收入
+
+        Args:
+            amount: 利息金额
+            note: 备注
+
+        Returns:
+            资金流水记录
+        """
+        if amount <= 0:
+            raise ValueError("利息金额必须为正数")
+
+        flow = CashFlow(
+            date=datetime.now(),
+            amount=amount,
+            flow_type=FlowType.INTEREST,
+            note=note or "利息收入",
+        )
+        self.cash += amount
+        self.cash_flows.append(flow)
+        return flow
+
+    # ============================================================
+    # 资金流水统计
+    # ============================================================
+
+    @property
+    def total_deposits(self) -> float:
+        """总入金"""
+        return sum(f.amount for f in self.cash_flows if f.flow_type == FlowType.DEPOSIT)
+
+    @property
+    def total_withdrawals(self) -> float:
+        """总出金（返回正数）"""
+        return abs(sum(f.amount for f in self.cash_flows if f.flow_type == FlowType.WITHDRAW))
+
+    @property
+    def total_dividends(self) -> float:
+        """总分红收入"""
+        return sum(f.amount for f in self.cash_flows if f.flow_type == FlowType.DIVIDEND)
+
+    @property
+    def total_taxes(self) -> float:
+        """总扣税（返回正数）"""
+        return abs(sum(f.amount for f in self.cash_flows if f.flow_type == FlowType.TAX))
+
+    @property
+    def total_fees(self) -> float:
+        """总费用（手续费+过户费+印花税，返回正数）"""
+        fee_types = {FlowType.COMMISSION, FlowType.TRANSFER_FEE, FlowType.STAMP_TAX}
+        return abs(sum(f.amount for f in self.cash_flows if f.flow_type in fee_types))
+
+    @property
+    def net_cash_flow(self) -> float:
+        """净资金流入（入金-出金）"""
+        return self.total_deposits - self.total_withdrawals
+
+    def get_cash_flow_summary(self) -> Dict:
+        """获取资金流水汇总"""
+        return {
+            "total_deposits": self.total_deposits,
+            "total_withdrawals": self.total_withdrawals,
+            "net_cash_flow": self.net_cash_flow,
+            "total_dividends": self.total_dividends,
+            "total_taxes": self.total_taxes,
+            "total_fees": self.total_fees,
+            "flow_count": len(self.cash_flows),
+        }

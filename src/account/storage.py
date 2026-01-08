@@ -10,7 +10,7 @@ from typing import Dict, List, Optional
 
 import pandas as pd
 
-from src.account.portfolio import Portfolio, Position
+from src.account.portfolio import Portfolio, Position, CashFlow, FlowType
 from src.account.asset import AssetManager, AssetSnapshot
 
 
@@ -100,6 +100,20 @@ class PortfolioStorage:
                 FOREIGN KEY (portfolio_name) REFERENCES portfolios(name)
             )
             """,
+            # 资金流水表
+            """
+            CREATE TABLE IF NOT EXISTS cash_flows (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                portfolio_name TEXT,
+                flow_date TEXT,
+                amount REAL,
+                flow_type TEXT,
+                code TEXT,
+                note TEXT,
+                created_at TEXT,
+                FOREIGN KEY (portfolio_name) REFERENCES portfolios(name)
+            )
+            """,
             # 索引
             """
             CREATE INDEX IF NOT EXISTS idx_positions_portfolio
@@ -112,6 +126,10 @@ class PortfolioStorage:
             """
             CREATE INDEX IF NOT EXISTS idx_transactions_portfolio_date
             ON transactions(portfolio_name, trade_date)
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_cash_flows_portfolio_date
+            ON cash_flows(portfolio_name, flow_date)
             """,
         ]
 
@@ -180,6 +198,31 @@ class PortfolioStorage:
                     },
                 )
 
+            # 删除旧资金流水
+            conn.execute(
+                text("DELETE FROM cash_flows WHERE portfolio_name = :name"),
+                {"name": portfolio.name},
+            )
+
+            # 保存资金流水
+            for flow in portfolio.cash_flows:
+                conn.execute(
+                    text("""
+                        INSERT INTO cash_flows
+                        (portfolio_name, flow_date, amount, flow_type, code, note, created_at)
+                        VALUES (:portfolio_name, :flow_date, :amount, :flow_type, :code, :note, :created_at)
+                    """),
+                    {
+                        "portfolio_name": portfolio.name,
+                        "flow_date": flow.date.isoformat(),
+                        "amount": flow.amount,
+                        "flow_type": flow.flow_type,
+                        "code": flow.code,
+                        "note": flow.note,
+                        "created_at": now,
+                    },
+                )
+
             conn.commit()
 
         return True
@@ -233,6 +276,26 @@ class PortfolioStorage:
         except Exception:
             pass
 
+        # 加载资金流水
+        try:
+            flows_df = pd.read_sql(
+                f"SELECT * FROM cash_flows WHERE portfolio_name = '{name}' ORDER BY flow_date",
+                self.engine,
+            )
+
+            for _, flow_row in flows_df.iterrows():
+                portfolio.cash_flows.append(
+                    CashFlow(
+                        date=datetime.fromisoformat(flow_row["flow_date"]),
+                        amount=flow_row["amount"],
+                        flow_type=flow_row["flow_type"],
+                        code=flow_row["code"] or "",
+                        note=flow_row["note"] or "",
+                    )
+                )
+        except Exception:
+            pass
+
         return portfolio
 
     def delete_portfolio(self, name: str) -> bool:
@@ -250,6 +313,10 @@ class PortfolioStorage:
             )
             conn.execute(
                 text("DELETE FROM transactions WHERE portfolio_name = :name"),
+                {"name": name},
+            )
+            conn.execute(
+                text("DELETE FROM cash_flows WHERE portfolio_name = :name"),
                 {"name": name},
             )
             conn.execute(
@@ -437,6 +504,124 @@ class PortfolioStorage:
             "sell_count": len(df[df["direction"] == "sell"]),
             "total_amount": df["amount"].sum(),
             "total_commission": df["commission"].sum(),
+        }
+
+    # ============================================================
+    # 资金流水操作
+    # ============================================================
+
+    def save_cash_flow(self, portfolio_name: str, flow: CashFlow) -> bool:
+        """保存单条资金流水"""
+        from sqlalchemy import text
+
+        now = datetime.now().isoformat()
+
+        with self.engine.connect() as conn:
+            conn.execute(
+                text("""
+                    INSERT INTO cash_flows
+                    (portfolio_name, flow_date, amount, flow_type, code, note, created_at)
+                    VALUES (:portfolio_name, :flow_date, :amount, :flow_type, :code, :note, :created_at)
+                """),
+                {
+                    "portfolio_name": portfolio_name,
+                    "flow_date": flow.date.isoformat(),
+                    "amount": flow.amount,
+                    "flow_type": flow.flow_type,
+                    "code": flow.code,
+                    "note": flow.note,
+                    "created_at": now,
+                },
+            )
+            conn.commit()
+
+        return True
+
+    def load_cash_flows(
+        self,
+        portfolio_name: str,
+        start_date: Optional[date] = None,
+        end_date: Optional[date] = None,
+        flow_type: Optional[str] = None,
+    ) -> List[CashFlow]:
+        """加载资金流水"""
+        query = f"SELECT * FROM cash_flows WHERE portfolio_name = '{portfolio_name}'"
+
+        if start_date:
+            query += f" AND flow_date >= '{start_date.isoformat()}'"
+        if end_date:
+            query += f" AND flow_date <= '{end_date.isoformat()}'"
+        if flow_type:
+            query += f" AND flow_type = '{flow_type}'"
+
+        query += " ORDER BY flow_date, id"
+
+        try:
+            df = pd.read_sql(query, self.engine)
+        except Exception:
+            return []
+
+        flows = []
+        for _, row in df.iterrows():
+            flows.append(
+                CashFlow(
+                    date=datetime.fromisoformat(row["flow_date"]),
+                    amount=row["amount"],
+                    flow_type=row["flow_type"],
+                    code=row["code"] or "",
+                    note=row["note"] or "",
+                )
+            )
+
+        return flows
+
+    def get_cash_flow_history(self, portfolio_name: str) -> pd.DataFrame:
+        """获取资金流水历史DataFrame"""
+        query = f"""
+            SELECT flow_date as date, amount, flow_type, code, note
+            FROM cash_flows
+            WHERE portfolio_name = '{portfolio_name}'
+            ORDER BY flow_date
+        """
+
+        try:
+            df = pd.read_sql(query, self.engine)
+            if not df.empty:
+                df["date"] = pd.to_datetime(df["date"])
+            return df
+        except Exception:
+            return pd.DataFrame()
+
+    def get_cash_flow_summary(self, portfolio_name: str) -> Dict:
+        """获取资金流水统计"""
+        flows = self.load_cash_flows(portfolio_name)
+
+        if not flows:
+            return {
+                "total_deposits": 0,
+                "total_withdrawals": 0,
+                "total_dividends": 0,
+                "total_taxes": 0,
+                "total_fees": 0,
+                "net_cash_flow": 0,
+                "flow_count": 0,
+            }
+
+        deposits = sum(f.amount for f in flows if f.flow_type == FlowType.DEPOSIT)
+        withdrawals = abs(sum(f.amount for f in flows if f.flow_type == FlowType.WITHDRAW))
+        dividends = sum(f.amount for f in flows if f.flow_type == FlowType.DIVIDEND)
+        taxes = abs(sum(f.amount for f in flows if f.flow_type == FlowType.TAX))
+        fee_types = {FlowType.COMMISSION, FlowType.TRANSFER_FEE, FlowType.STAMP_TAX}
+        fees = abs(sum(f.amount for f in flows if f.flow_type in fee_types))
+
+        return {
+            "total_deposits": deposits,
+            "total_withdrawals": withdrawals,
+            "total_dividends": dividends,
+            "total_taxes": taxes,
+            "total_fees": fees,
+            "net_cash_flow": deposits - withdrawals,
+            "flow_count": len(flows),
         }
 
 
