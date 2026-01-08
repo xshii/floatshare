@@ -9,7 +9,7 @@ from src.backtest.matcher import OrderMatcher
 from src.backtest.report import BacktestReport
 from src.strategy.base import Strategy, Signal
 from src.execution.order import Order, OrderStatus
-from config.trading import TradingConfig
+from config import TradingConfig
 
 
 class BacktestEngine:
