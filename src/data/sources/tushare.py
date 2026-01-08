@@ -5,14 +5,14 @@ from typing import List, Optional
 import pandas as pd
 
 from src.data.loader import BaseDataSource
-from config.settings import settings
+from config import get_settings
 
 
 class TushareSource(BaseDataSource):
     """Tushare数据源"""
 
     def __init__(self, token: Optional[str] = None):
-        self.token = token or settings.TUSHARE_TOKEN
+        self.token = token or get_settings().data_source.tushare_token
         self._pro = None
 
     @property

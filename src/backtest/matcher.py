@@ -4,7 +4,7 @@ from typing import Optional
 import pandas as pd
 
 from src.execution.order import Order, OrderStatus
-from config.trading import TradingConfig, Direction
+from config import TradingConfig, Direction
 
 
 class OrderMatcher:

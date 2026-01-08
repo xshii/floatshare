@@ -5,6 +5,12 @@ from typing import List, Optional
 import pandas as pd
 
 from src.data.loader import BaseDataSource
+from src.utils.market_utils import (
+    add_market_suffix,
+    remove_market_suffix,
+    format_date_str,
+    apply_adjustment,
+)
 
 
 class EastMoneySource(BaseDataSource):
@@ -31,20 +37,10 @@ class EastMoneySource(BaseDataSource):
             df = self.ak.stock_zh_a_spot_em()
             df = df[["代码", "名称"]].copy()
             df = df.rename(columns={"代码": "ticker", "名称": "name"})
-            df["code"] = df["ticker"].apply(self._add_market_suffix)
+            df["code"] = df["ticker"].apply(add_market_suffix)
             return df
         except Exception:
             return pd.DataFrame()
-
-    def _add_market_suffix(self, ticker: str) -> str:
-        """添加市场后缀"""
-        if ticker.startswith("6"):
-            return f"{ticker}.SH"
-        elif ticker.startswith(("0", "3")):
-            return f"{ticker}.SZ"
-        elif ticker.startswith(("4", "8")):
-            return f"{ticker}.BJ"
-        return ticker
 
     def get_daily(
         self,
@@ -65,9 +61,9 @@ class EastMoneySource(BaseDataSource):
         Returns:
             DataFrame，价格默认为不复权，包含 adj_factor 列
         """
-        ticker = code.split(".")[0] if "." in code else code
-        start_str = start_date.strftime("%Y%m%d") if start_date else "19900101"
-        end_str = end_date.strftime("%Y%m%d") if end_date else None
+        ticker = remove_market_suffix(code)
+        start_str = format_date_str(start_date, default="19900101")
+        end_str = format_date_str(end_date) or None
 
         try:
             # 获取不复权数据
@@ -76,7 +72,7 @@ class EastMoneySource(BaseDataSource):
                 period="daily",
                 start_date=start_str,
                 end_date=end_str,
-                adjust="",  # 不复权
+                adjust="",
             )
 
             # 获取后复权数据来计算复权因子
@@ -120,15 +116,7 @@ class EastMoneySource(BaseDataSource):
             df["adj_factor"] = 1.0
 
         df = df.sort_values("trade_date")
-
-        # 如果请求复权数据，动态计算
-        if adj == "hfq":
-            for col in ["open", "high", "low", "close"]:
-                df[col] = df[col] * df["adj_factor"]
-        elif adj == "qfq":
-            latest_factor = df["adj_factor"].iloc[-1]
-            for col in ["open", "high", "low", "close"]:
-                df[col] = df[col] * df["adj_factor"] / latest_factor
+        df = apply_adjustment(df, adj)
 
         return df.reset_index(drop=True)
 
@@ -174,7 +162,7 @@ class EastMoneySource(BaseDataSource):
         end_date: Optional[date] = None,
     ) -> pd.DataFrame:
         """获取分红送股数据（使用AKShare）"""
-        ticker = code.split(".")[0] if "." in code else code
+        ticker = remove_market_suffix(code)
 
         try:
             df = self.ak.stock_fhps_em(symbol=ticker)

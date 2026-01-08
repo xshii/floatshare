@@ -6,7 +6,7 @@ from datetime import datetime
 from src.execution.broker.base import BaseBroker
 from src.execution.order import Order, OrderStatus
 from src.execution.position import PositionDetail, PositionManager
-from config.trading import TradingConfig, Direction
+from config import TradingConfig, Direction
 
 
 class SimulatorBroker(BaseBroker):

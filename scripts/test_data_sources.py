@@ -75,14 +75,14 @@ def test_tushare():
 
         # 检查 token
         try:
-            from config.settings import settings
-            token = settings.TUSHARE_TOKEN
+            from config import get_settings
+            token = get_settings().data_source.tushare_token
         except Exception:
             token = None
 
         if not token:
             print("⚠ 未配置 TUSHARE_TOKEN，跳过 Tushare 测试")
-            print("  请在 config/settings.py 中设置 TUSHARE_TOKEN")
+            print("  请设置环境变量 FLOATSHARE_DATA_SOURCE__TUSHARE_TOKEN")
             return None
 
         pro = ts.pro_api(token)

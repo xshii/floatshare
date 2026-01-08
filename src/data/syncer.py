@@ -23,6 +23,7 @@ import pandas as pd
 
 from src.data.loader import DataLoader
 from src.data.storage.database import DatabaseStorage
+from src.utils.market_utils import add_market_suffix
 
 logger = logging.getLogger(__name__)
 
@@ -582,7 +583,7 @@ class DataSyncer:
             elif "证券代码" in df.columns:
                 df = df.rename(columns={"证券代码": "ticker", "证券名称": "name"})
 
-            df["code"] = df["ticker"].apply(self._add_market_suffix)
+            df["code"] = df["ticker"].apply(lambda t: add_market_suffix(str(t).zfill(6)))
             df["priority"] = priority.value
 
             return df[["code", "name", "priority"]].drop_duplicates()
@@ -602,20 +603,9 @@ class DataSyncer:
 
         # 确保有必要的列
         if "code" not in df.columns and "ticker" in df.columns:
-            df["code"] = df["ticker"].apply(self._add_market_suffix)
+            df["code"] = df["ticker"].apply(lambda t: add_market_suffix(str(t).zfill(6)))
 
         return df[["code", "name", "priority"]].drop_duplicates()
-
-    def _add_market_suffix(self, ticker: str) -> str:
-        """添加市场后缀"""
-        ticker = str(ticker).zfill(6)
-        if ticker.startswith("6"):
-            return f"{ticker}.SH"
-        elif ticker.startswith(("0", "3")):
-            return f"{ticker}.SZ"
-        elif ticker.startswith(("4", "8")):
-            return f"{ticker}.BJ"
-        return ticker
 
     # ============================================================
     # 增量同步

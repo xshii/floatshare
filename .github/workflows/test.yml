@@ -7,9 +7,15 @@ on:
     branches: [main]
 
 jobs:
-  # 单元测试
+  # 单元测试 (matrix strategy)
   unit-test:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        test-group:
+          - { path: "ut/data", name: "data", cov: "src/data" }
+          - { path: "ut/core", name: "core", cov: "src" }
+          - { path: "ut/infra", name: "infra", cov: "src/utils" }
 
     steps:
       - uses: actions/checkout@v4
@@ -33,17 +39,18 @@ jobs:
           pip install -r requirements.txt
           pip install pytest pytest-cov
 
-      - name: Run unit tests
+      - name: Run ${{ matrix.test-group.name }} tests
         run: |
-          pytest ut/ -v --cov=src --cov-report=xml
+          pytest ${{ matrix.test-group.path }} -v --cov=${{ matrix.test-group.cov }} --cov-report=xml
 
       - name: Upload coverage
         uses: codecov/codecov-action@v4
         with:
           file: ./coverage.xml
           fail_ci_if_error: false
+          flags: ${{ matrix.test-group.name }}
 
-  # 集成测试（并行运行）
+  # 集成测试
   integration-test:
     runs-on: ubuntu-latest
 

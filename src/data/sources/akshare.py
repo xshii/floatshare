@@ -5,6 +5,12 @@ from typing import List, Optional
 import pandas as pd
 
 from src.data.loader import BaseDataSource
+from src.utils.market_utils import (
+    add_market_suffix,
+    remove_market_suffix,
+    format_date_str,
+    apply_adjustment,
+)
 
 
 class AKShareSource(BaseDataSource):
@@ -29,23 +35,8 @@ class AKShareSource(BaseDataSource):
         """获取股票列表"""
         df = self.ak.stock_info_a_code_name()
         df = df.rename(columns={"code": "ticker"})
-        # 添加code列（带市场后缀）
-        df["code"] = df["ticker"].apply(self._add_market_suffix)
+        df["code"] = df["ticker"].apply(add_market_suffix)
         return df
-
-    def _add_market_suffix(self, ticker: str) -> str:
-        """添加市场后缀"""
-        if ticker.startswith("6"):
-            return f"{ticker}.SH"
-        elif ticker.startswith(("0", "3")):
-            return f"{ticker}.SZ"
-        elif ticker.startswith(("4", "8")):
-            return f"{ticker}.BJ"
-        return ticker
-
-    def _remove_market_suffix(self, code: str) -> str:
-        """移除市场后缀"""
-        return code.split(".")[0] if "." in code else code
 
     def get_daily(
         self,
@@ -66,9 +57,9 @@ class AKShareSource(BaseDataSource):
         Returns:
             DataFrame，价格默认为不复权，包含 adj_factor 列
         """
-        ticker = self._remove_market_suffix(code)
-        start_str = start_date.strftime("%Y%m%d") if start_date else "19900101"
-        end_str = end_date.strftime("%Y%m%d") if end_date else None
+        ticker = remove_market_suffix(code)
+        start_str = format_date_str(start_date, default="19900101")
+        end_str = format_date_str(end_date) or None
 
         try:
             # 获取不复权数据
@@ -77,7 +68,7 @@ class AKShareSource(BaseDataSource):
                 period="daily",
                 start_date=start_str,
                 end_date=end_str,
-                adjust="",  # 不复权
+                adjust="",
             )
 
             # 同时获取后复权数据来计算复权因子
@@ -113,7 +104,7 @@ class AKShareSource(BaseDataSource):
         df["code"] = code
         df["trade_date"] = pd.to_datetime(df["trade_date"])
 
-        # 计算复权因子: adj_factor = 后复权价格 / 不复权价格
+        # 计算复权因子
         if not df_hfq.empty and "收盘" in df_hfq.columns:
             df_hfq = df_hfq.rename(columns={"日期": "trade_date", "收盘": "close_hfq"})
             df_hfq["trade_date"] = pd.to_datetime(df_hfq["trade_date"])
@@ -125,15 +116,7 @@ class AKShareSource(BaseDataSource):
             df["adj_factor"] = 1.0
 
         df = df.sort_values("trade_date")
-
-        # 如果请求复权数据，动态计算
-        if adj == "hfq":
-            for col in ["open", "high", "low", "close"]:
-                df[col] = df[col] * df["adj_factor"]
-        elif adj == "qfq":
-            latest_factor = df["adj_factor"].iloc[-1]
-            for col in ["open", "high", "low", "close"]:
-                df[col] = df[col] * df["adj_factor"] / latest_factor
+        df = apply_adjustment(df, adj)
 
         return df.reset_index(drop=True)
 
@@ -145,7 +128,7 @@ class AKShareSource(BaseDataSource):
         freq: str = "5min",
     ) -> pd.DataFrame:
         """获取分钟线数据"""
-        ticker = self._remove_market_suffix(code)
+        ticker = remove_market_suffix(code)
 
         # 频率映射
         period_map = {"1min": "1", "5min": "5", "15min": "15", "30min": "30", "60min": "60"}
@@ -183,7 +166,7 @@ class AKShareSource(BaseDataSource):
         end_date: Optional[date] = None,
     ) -> pd.DataFrame:
         """获取指数日线数据"""
-        ticker = self._remove_market_suffix(code)
+        ticker = remove_market_suffix(code)
 
         try:
             df = self.ak.stock_zh_index_daily(symbol=f"sh{ticker}")
@@ -218,7 +201,7 @@ class AKShareSource(BaseDataSource):
         report_type: str = "quarterly",
     ) -> pd.DataFrame:
         """获取财务数据"""
-        ticker = self._remove_market_suffix(code)
+        ticker = remove_market_suffix(code)
 
         try:
             # 获取财务指标
@@ -273,7 +256,7 @@ class AKShareSource(BaseDataSource):
             - allot_ratio: 每股配股比例
             - allot_price: 配股价格
         """
-        ticker = self._remove_market_suffix(code)
+        ticker = remove_market_suffix(code)
 
         try:
             # 获取分红送配数据
