@@ -62,11 +62,14 @@ where = ["."]
 include = ["src*", "config*", "strategies*"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["ut", "it"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
 addopts = "-v --tb=short"
+markers = [
+    "integration: marks tests as integration tests (deselect with '-m \"not integration\"')",
+]
 
 [tool.black]
 line-length = 88
