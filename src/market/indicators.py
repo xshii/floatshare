@@ -34,6 +34,12 @@ class Volatility(Enum):
     LOW = "low"             # 低波动
 
 
+class IndicatorType(Enum):
+    """指标类型"""
+    OBJECTIVE = "objective"     # 客观指标：纯数学计算，无主观判断
+    SUBJECTIVE = "subjective"   # 主观指标：包含阈值判断、分类等人为设定
+
+
 # ============================================================
 # 指标结果数据类
 # ============================================================
@@ -42,10 +48,12 @@ class Volatility(Enum):
 class IndicatorResult:
     """指标计算结果"""
     name: str                           # 指标名称
-    value: float                        # 数值
-    signal: str                         # 信号: bullish/bearish/neutral
-    score: float                        # 得分: -1 到 +1
+    value: float                        # 原始数值（客观）
+    signal: str                         # 信号: bullish/bearish/neutral（主观）
+    score: float                        # 得分: -1 到 +1（主观）
+    indicator_type: str = "objective"   # 指标类型
     description: str = ""               # 描述
+    raw_values: Dict[str, float] = field(default_factory=dict)  # 原始计算值（客观）
     params: Dict[str, Any] = field(default_factory=dict)  # 参数
     timestamp: datetime = field(default_factory=datetime.now)
 
@@ -55,10 +63,20 @@ class IndicatorResult:
             "value": self.value,
             "signal": self.signal,
             "score": self.score,
+            "indicator_type": self.indicator_type,
             "description": self.description,
+            "raw_values": self.raw_values,
             "params": self.params,
             "timestamp": self.timestamp.isoformat(),
         }
+
+    @property
+    def is_objective(self) -> bool:
+        return self.indicator_type == "objective"
+
+    @property
+    def is_subjective(self) -> bool:
+        return self.indicator_type == "subjective"
 
 
 @dataclass
@@ -106,6 +124,7 @@ class MarketIndicator(ABC):
     name: str = "BaseIndicator"
     description: str = ""
     category: str = "general"  # trend/volatility/momentum/sentiment
+    indicator_type: str = "objective"  # objective/subjective
 
     def __init__(self, params: Optional[Dict[str, Any]] = None):
         self.params = params or {}
@@ -133,20 +152,25 @@ class MarketIndicator(ABC):
 # ============================================================
 
 class ADXIndicator(MarketIndicator):
-    """ADX 平均趋向指标"""
+    """ADX 平均趋向指标 - 客观计算 + 主观判断"""
 
     name = "ADX"
     description = "平均趋向指标，判断趋势强度"
     category = "trend"
+    indicator_type = "subjective"  # 包含阈值判断(25/20)
 
     def __init__(self, params: Optional[Dict] = None):
         super().__init__(params)
         self.period = self.get_param("period", 14)
+        # 主观阈值参数
+        self.strong_threshold = self.get_param("strong_threshold", 25)
+        self.weak_threshold = self.get_param("weak_threshold", 20)
 
     def calculate(self, data: pd.DataFrame) -> IndicatorResult:
         if len(data) < self.period * 2:
             return IndicatorResult(
                 name=self.name, value=0, signal="neutral", score=0,
+                indicator_type=self.indicator_type,
                 description="数据不足"
             )
 
@@ -154,7 +178,7 @@ class ADXIndicator(MarketIndicator):
         low = data["low"].values
         close = data["close"].values
 
-        # 计算 TR, +DM, -DM
+        # ===== 客观计算部分 =====
         tr = np.maximum(
             high[1:] - low[1:],
             np.maximum(
@@ -172,29 +196,37 @@ class ADXIndicator(MarketIndicator):
             np.maximum(low[:-1] - low[1:], 0), 0
         )
 
-        # 平滑
         atr = pd.Series(tr).rolling(self.period).mean()
         plus_di = 100 * pd.Series(plus_dm).rolling(self.period).mean() / atr
         minus_di = 100 * pd.Series(minus_dm).rolling(self.period).mean() / atr
 
-        # 计算 DX 和 ADX
         dx = 100 * np.abs(plus_di - minus_di) / (plus_di + minus_di + 1e-10)
         adx = dx.rolling(self.period).mean()
 
         adx_value = adx.iloc[-1] if not np.isnan(adx.iloc[-1]) else 20
+        plus_di_value = plus_di.iloc[-1] if not np.isnan(plus_di.iloc[-1]) else 0
+        minus_di_value = minus_di.iloc[-1] if not np.isnan(minus_di.iloc[-1]) else 0
 
-        # 判断信号
-        if adx_value > 25:
-            signal = "bullish" if plus_di.iloc[-1] > minus_di.iloc[-1] else "bearish"
+        # 客观原始值
+        raw_values = {
+            "adx": adx_value,
+            "plus_di": plus_di_value,
+            "minus_di": minus_di_value,
+            "atr": atr.iloc[-1] if not np.isnan(atr.iloc[-1]) else 0,
+        }
+
+        # ===== 主观判断部分 =====
+        if adx_value > self.strong_threshold:
+            signal = "bullish" if plus_di_value > minus_di_value else "bearish"
             score = 0.5 if signal == "bullish" else -0.5
             desc = f"强趋势 (ADX={adx_value:.1f})"
-        elif adx_value < 20:
+        elif adx_value < self.weak_threshold:
             signal = "neutral"
             score = 0
             desc = f"震荡市 (ADX={adx_value:.1f})"
         else:
             signal = "neutral"
-            score = 0.1 if plus_di.iloc[-1] > minus_di.iloc[-1] else -0.1
+            score = 0.1 if plus_di_value > minus_di_value else -0.1
             desc = f"过渡期 (ADX={adx_value:.1f})"
 
         return IndicatorResult(
@@ -202,8 +234,10 @@ class ADXIndicator(MarketIndicator):
             value=adx_value,
             signal=signal,
             score=score,
+            indicator_type=self.indicator_type,
             description=desc,
-            params={"period": self.period}
+            raw_values=raw_values,
+            params={"period": self.period, "strong_threshold": self.strong_threshold}
         )
 
 
