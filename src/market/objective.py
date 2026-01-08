@@ -393,6 +393,330 @@ class PriceRangeIndicator(ObjectiveIndicator):
         )
 
 
+class BottomTrendlineIndicator(ObjectiveIndicator):
+    """筑底趋势线指标
+
+    识别局部低点并拟合支撑趋势线，用于判断底部形态。
+
+    返回值说明:
+    - slope: 趋势线斜率（正=上升趋势，负=下降趋势）
+    - intercept: 趋势线截距
+    - support_price: 当前趋势线支撑价位
+    - distance_pct: 当前价格距支撑线的百分比距离（正=在支撑线上方）
+    - touch_count: 触及趋势线次数（越多越有效）
+    - r_squared: 拟合优度（越接近1越好）
+    - is_valid: 是否为有效趋势线
+    - lows: 识别到的低点列表
+    """
+
+    name = "BottomTrendline"
+    description = "筑底趋势线"
+
+    def __init__(self, params: Optional[Dict] = None):
+        super().__init__(params)
+        self.lookback = self.get_param("lookback", 60)  # 回看周期
+        self.min_lows = self.get_param("min_lows", 3)   # 最少低点数
+        self.swing_window = self.get_param("swing_window", 5)  # 低点识别窗口
+        self.touch_threshold = self.get_param("touch_threshold", 0.02)  # 触及阈值2%
+
+    def _find_swing_lows(self, data: pd.DataFrame) -> List[Dict]:
+        """识别摆动低点（局部最低点）"""
+        lows = data["low"].values
+        swing_lows = []
+        window = self.swing_window
+
+        for i in range(window, len(lows) - window):
+            # 检查是否是局部最低点
+            is_low = True
+            for j in range(i - window, i + window + 1):
+                if j != i and lows[j] < lows[i]:
+                    is_low = False
+                    break
+
+            if is_low:
+                swing_lows.append({
+                    "index": i,
+                    "price": lows[i],
+                    "date": data.index[i] if isinstance(data.index, pd.DatetimeIndex)
+                            else data.iloc[i].get("trade_date", i),
+                })
+
+        return swing_lows
+
+    def _fit_trendline(self, lows: List[Dict]) -> Dict:
+        """最小二乘法拟合趋势线"""
+        if len(lows) < 2:
+            return {"slope": 0, "intercept": 0, "r_squared": 0}
+
+        x = np.array([l["index"] for l in lows])
+        y = np.array([l["price"] for l in lows])
+
+        # 线性回归: y = slope * x + intercept
+        n = len(x)
+        sum_x = np.sum(x)
+        sum_y = np.sum(y)
+        sum_xy = np.sum(x * y)
+        sum_x2 = np.sum(x ** 2)
+
+        denominator = n * sum_x2 - sum_x ** 2
+        if abs(denominator) < 1e-10:
+            return {"slope": 0, "intercept": y.mean(), "r_squared": 0}
+
+        slope = (n * sum_xy - sum_x * sum_y) / denominator
+        intercept = (sum_y - slope * sum_x) / n
+
+        # 计算R²
+        y_pred = slope * x + intercept
+        ss_res = np.sum((y - y_pred) ** 2)
+        ss_tot = np.sum((y - y.mean()) ** 2)
+        r_squared = 1 - ss_res / (ss_tot + 1e-10)
+
+        return {
+            "slope": slope,
+            "intercept": intercept,
+            "r_squared": max(0, r_squared),
+        }
+
+    def _count_touches(self, data: pd.DataFrame, slope: float, intercept: float) -> int:
+        """统计价格触及趋势线的次数"""
+        touches = 0
+        lows = data["low"].values
+
+        for i, low in enumerate(lows):
+            support = slope * i + intercept
+            if support > 0:
+                distance_pct = (low - support) / support
+                if abs(distance_pct) <= self.touch_threshold:
+                    touches += 1
+
+        return touches
+
+    def calculate(self, data: pd.DataFrame) -> ObjectiveValue:
+        if len(data) < self.lookback:
+            return ObjectiveValue(
+                name=self.name,
+                values={
+                    "slope": 0,
+                    "intercept": 0,
+                    "support_price": 0,
+                    "distance_pct": 0,
+                    "touch_count": 0,
+                    "r_squared": 0,
+                    "is_valid": 0,
+                    "low_count": 0,
+                }
+            )
+
+        recent = data.tail(self.lookback).reset_index(drop=True)
+
+        # 1. 识别摆动低点
+        swing_lows = self._find_swing_lows(recent)
+
+        if len(swing_lows) < 2:
+            current_price = recent["close"].iloc[-1]
+            return ObjectiveValue(
+                name=self.name,
+                values={
+                    "slope": 0,
+                    "intercept": current_price,
+                    "support_price": current_price * 0.95,
+                    "distance_pct": 0.05,
+                    "touch_count": 0,
+                    "r_squared": 0,
+                    "is_valid": 0,
+                    "low_count": len(swing_lows),
+                }
+            )
+
+        # 2. 拟合趋势线
+        fit = self._fit_trendline(swing_lows)
+        slope = fit["slope"]
+        intercept = fit["intercept"]
+        r_squared = fit["r_squared"]
+
+        # 3. 计算当前支撑价位
+        current_idx = len(recent) - 1
+        support_price = slope * current_idx + intercept
+
+        # 4. 计算距离
+        current_price = recent["close"].iloc[-1]
+        distance_pct = (current_price - support_price) / support_price if support_price > 0 else 0
+
+        # 5. 统计触及次数
+        touch_count = self._count_touches(recent, slope, intercept)
+
+        # 6. 判断有效性
+        is_valid = (
+            len(swing_lows) >= self.min_lows and
+            touch_count >= 2 and
+            r_squared > 0.5 and
+            slope >= 0  # 筑底应该是水平或上升趋势线
+        )
+
+        return ObjectiveValue(
+            name=self.name,
+            values={
+                "slope": slope,
+                "slope_pct": slope / intercept * 100 if intercept > 0 else 0,  # 每天涨跌%
+                "intercept": intercept,
+                "support_price": support_price,
+                "current_price": current_price,
+                "distance_pct": distance_pct,
+                "touch_count": touch_count,
+                "r_squared": r_squared,
+                "is_valid": 1 if is_valid else 0,
+                "low_count": len(swing_lows),
+                "last_low_price": swing_lows[-1]["price"] if swing_lows else 0,
+            },
+            params={
+                "lookback": self.lookback,
+                "min_lows": self.min_lows,
+                "swing_window": self.swing_window,
+                "lows": [(l["index"], l["price"]) for l in swing_lows],
+            }
+        )
+
+
+class TopTrendlineIndicator(ObjectiveIndicator):
+    """筑顶趋势线指标
+
+    识别局部高点并拟合阻力趋势线，用于判断顶部形态。
+    """
+
+    name = "TopTrendline"
+    description = "筑顶趋势线"
+
+    def __init__(self, params: Optional[Dict] = None):
+        super().__init__(params)
+        self.lookback = self.get_param("lookback", 60)
+        self.min_highs = self.get_param("min_highs", 3)
+        self.swing_window = self.get_param("swing_window", 5)
+        self.touch_threshold = self.get_param("touch_threshold", 0.02)
+
+    def _find_swing_highs(self, data: pd.DataFrame) -> List[Dict]:
+        """识别摆动高点（局部最高点）"""
+        highs = data["high"].values
+        swing_highs = []
+        window = self.swing_window
+
+        for i in range(window, len(highs) - window):
+            is_high = True
+            for j in range(i - window, i + window + 1):
+                if j != i and highs[j] > highs[i]:
+                    is_high = False
+                    break
+
+            if is_high:
+                swing_highs.append({
+                    "index": i,
+                    "price": highs[i],
+                })
+
+        return swing_highs
+
+    def _fit_trendline(self, highs: List[Dict]) -> Dict:
+        if len(highs) < 2:
+            return {"slope": 0, "intercept": 0, "r_squared": 0}
+
+        x = np.array([h["index"] for h in highs])
+        y = np.array([h["price"] for h in highs])
+
+        n = len(x)
+        sum_x = np.sum(x)
+        sum_y = np.sum(y)
+        sum_xy = np.sum(x * y)
+        sum_x2 = np.sum(x ** 2)
+
+        denominator = n * sum_x2 - sum_x ** 2
+        if abs(denominator) < 1e-10:
+            return {"slope": 0, "intercept": y.mean(), "r_squared": 0}
+
+        slope = (n * sum_xy - sum_x * sum_y) / denominator
+        intercept = (sum_y - slope * sum_x) / n
+
+        y_pred = slope * x + intercept
+        ss_res = np.sum((y - y_pred) ** 2)
+        ss_tot = np.sum((y - y.mean()) ** 2)
+        r_squared = 1 - ss_res / (ss_tot + 1e-10)
+
+        return {"slope": slope, "intercept": intercept, "r_squared": max(0, r_squared)}
+
+    def _count_touches(self, data: pd.DataFrame, slope: float, intercept: float) -> int:
+        touches = 0
+        highs = data["high"].values
+
+        for i, high in enumerate(highs):
+            resistance = slope * i + intercept
+            if resistance > 0:
+                distance_pct = (high - resistance) / resistance
+                if abs(distance_pct) <= self.touch_threshold:
+                    touches += 1
+
+        return touches
+
+    def calculate(self, data: pd.DataFrame) -> ObjectiveValue:
+        if len(data) < self.lookback:
+            return ObjectiveValue(
+                name=self.name,
+                values={"slope": 0, "resistance_price": 0, "is_valid": 0}
+            )
+
+        recent = data.tail(self.lookback).reset_index(drop=True)
+        swing_highs = self._find_swing_highs(recent)
+
+        if len(swing_highs) < 2:
+            current_price = recent["close"].iloc[-1]
+            return ObjectiveValue(
+                name=self.name,
+                values={
+                    "slope": 0,
+                    "resistance_price": current_price * 1.05,
+                    "distance_pct": -0.05,
+                    "is_valid": 0,
+                    "high_count": len(swing_highs),
+                }
+            )
+
+        fit = self._fit_trendline(swing_highs)
+        slope = fit["slope"]
+        intercept = fit["intercept"]
+        r_squared = fit["r_squared"]
+
+        current_idx = len(recent) - 1
+        resistance_price = slope * current_idx + intercept
+        current_price = recent["close"].iloc[-1]
+        distance_pct = (current_price - resistance_price) / resistance_price if resistance_price > 0 else 0
+
+        touch_count = self._count_touches(recent, slope, intercept)
+
+        is_valid = (
+            len(swing_highs) >= self.min_highs and
+            touch_count >= 2 and
+            r_squared > 0.5 and
+            slope <= 0  # 筑顶应该是水平或下降趋势线
+        )
+
+        return ObjectiveValue(
+            name=self.name,
+            values={
+                "slope": slope,
+                "slope_pct": slope / intercept * 100 if intercept > 0 else 0,
+                "intercept": intercept,
+                "resistance_price": resistance_price,
+                "current_price": current_price,
+                "distance_pct": distance_pct,
+                "touch_count": touch_count,
+                "r_squared": r_squared,
+                "is_valid": 1 if is_valid else 0,
+                "high_count": len(swing_highs),
+            },
+            params={
+                "lookback": self.lookback,
+                "highs": [(h["index"], h["price"]) for h in swing_highs],
+            }
+        )
+
+
 # ============================================================
 # 客观指标注册表
 # ============================================================
@@ -432,3 +756,5 @@ ObjectiveRegistry.register("boll", BollIndicator)
 ObjectiveRegistry.register("kdj", KDJIndicator)
 ObjectiveRegistry.register("momentum", MomentumObjIndicator)
 ObjectiveRegistry.register("price_range", PriceRangeIndicator)
+ObjectiveRegistry.register("bottom_trendline", BottomTrendlineIndicator)
+ObjectiveRegistry.register("top_trendline", TopTrendlineIndicator)

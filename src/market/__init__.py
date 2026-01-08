@@ -37,6 +37,8 @@ from src.market.objective import (
     KDJIndicator,
     MomentumObjIndicator,
     PriceRangeIndicator,
+    BottomTrendlineIndicator,
+    TopTrendlineIndicator,
     # 注册表
     ObjectiveRegistry,
 )
@@ -82,6 +84,8 @@ __all__ = [
     "KDJIndicator",
     "MomentumObjIndicator",
     "PriceRangeIndicator",
+    "BottomTrendlineIndicator",
+    "TopTrendlineIndicator",
     "ObjectiveRegistry",
     # subjective.py
     "SignalType",
