@@ -11,7 +11,7 @@ import inspect
 import logging
 from abc import ABC, abstractmethod
 from enum import Enum
-from threading import Lock
+from threading import RLock
 from typing import Any, Callable, Dict, Generic, Optional, Type, TypeVar, Union, get_type_hints
 
 logger = logging.getLogger(__name__)
@@ -51,7 +51,7 @@ class Container:
 
     def __init__(self):
         self._services: Dict[Type, ServiceDescriptor] = {}
-        self._lock = Lock()
+        self._lock = RLock()
         self._scoped_instances: Dict[str, Dict[Type, Any]] = {}
 
     def register(
@@ -176,6 +176,10 @@ class Container:
         kwargs = {}
         for name, param in sig.parameters.items():
             if name == "self":
+                continue
+
+            # 跳过 *args 和 **kwargs
+            if param.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
                 continue
 
             # 获取参数类型

@@ -143,6 +143,7 @@ class DatabaseStorage:
                 pre_close REAL,
                 change REAL,
                 pct_change REAL,
+                adj_factor REAL,
                 UNIQUE(code, trade_date)
             )
             """,
