@@ -12,7 +12,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from src.data.loader import DataLoader
 from src.backtest.engine import BacktestEngine
 from src.strategy.registry import StrategyRegistry
-from src.monitor.logger import get_logger
+from src.utils.logging import get_logger
 
 # 导入策略以完成注册
 import strategies  # noqa

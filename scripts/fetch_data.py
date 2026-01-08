@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.data.loader import DataLoader
 from src.data.storage.database import DatabaseStorage
-from src.monitor.logger import get_logger
+from src.utils.logging import get_logger
 
 logger = get_logger("fetch_data")
 
