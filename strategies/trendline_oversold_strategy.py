@@ -106,6 +106,9 @@ class TrendlineOversoldStrategy:
         # 是否启用趋势自适应（默认开启）
         self.adaptive_mode = self.params.get("adaptive_mode", True)
 
+        # 趋势过滤：下降趋势中不买入（默认关闭，因为趋势预测准确率≈50%）
+        self.trend_filter = self.params.get("trend_filter", False)
+
         # 指标
         self.bottom_indicator = BottomTrendlineIndicator({
             "lookback": self.lookback,
@@ -304,13 +307,18 @@ class TrendlineOversoldStrategy:
         rsi = rsi_result.get("rsi", 50)
         volume_ratio = self._calculate_volume_ratio(data)
 
-        # 趋势判断
-        trend = "up" if slope > 0 else "down"
+        # 趋势判断（用均线：MA20 > MA60 为上升趋势）
+        ma20 = data["close"].tail(20).mean() if len(data) >= 20 else current_price
+        ma60 = data["close"].tail(60).mean() if len(data) >= 60 else current_price
+        trend = "up" if ma20 > ma60 else "down"
+        trend_slope = slope  # 保留斜率用于止盈自适应
 
         details = {
             "support_price": support_price,
             "slope": slope,
             "trend": trend,
+            "ma20": ma20,
+            "ma60": ma60,
             "rsi": rsi,
             "volume_ratio": volume_ratio,
             "position": self.state.position,
@@ -367,7 +375,7 @@ class TrendlineOversoldStrategy:
         # 5. 持仓状态下检查卖出信号
         if self.state.position > 0.1:
             # 5.1 检查移动止盈（传入斜率用于趋势自适应）
-            should_take_profit, _, tp_reason = self._check_take_profit(current_price, current_high, slope)
+            should_take_profit, _, tp_reason = self._check_take_profit(current_price, current_high, trend_slope)
             if should_take_profit:
                 return StrategySignal(
                     date=current_date,
@@ -390,6 +398,16 @@ class TrendlineOversoldStrategy:
 
         # 6. 检查买入信号（筑底确认且等待期已过）
         if self.state.bottom_confirmed and self.state.wait_days >= self.wait_after_bottom:
+            # 趋势过滤：下降趋势中不买入（MA20 < MA60）
+            if self.trend_filter and trend == "down":
+                return StrategySignal(
+                    date=current_date,
+                    action=PositionAction.HOLD,
+                    price=current_price,
+                    reason=f"趋势过滤: MA20({ma20:.2f})<MA60({ma60:.2f}), 等待上升趋势",
+                    details=details,
+                )
+
             is_oversold, os_reasons = self._is_oversold(rsi, current_price, support_price)
 
             if is_oversold:
