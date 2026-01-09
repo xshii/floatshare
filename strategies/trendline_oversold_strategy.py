@@ -7,9 +7,7 @@
 4. 超涨且价量不匹配时卖出10%（RSI>70 + 量比缩小）
 5. 每次超跌补满全仓
 6. 止损线为买入均价的-10%
-7. 止盈规则：
-   - 盈利15%时卖出50%（固定止盈）
-   - 盈利10%后启动移动止损，从最高点回撤5%时全部卖出
+7. 移动止盈：盈利达到阈值后启动，从最高点回撤超过阈值时全部卖出
 """
 
 from dataclasses import dataclass, field
@@ -97,10 +95,9 @@ class TrendlineOversoldStrategy:
         # 止损
         self.stop_loss_pct = self.params.get("stop_loss_pct", 0.10)
 
-        # 止盈参数
-        self.take_profit_pct = self.params.get("take_profit_pct", 0.15)  # 盈利15%止盈
-        self.trailing_stop_trigger = self.params.get("trailing_stop_trigger", 0.10)  # 盈利10%启动移动止损
-        self.trailing_stop_pct = self.params.get("trailing_stop_pct", 0.05)  # 移动止损回撤5%
+        # 止盈参数（纯移动止盈模式）
+        self.trailing_stop_trigger = self.params.get("trailing_stop_trigger", 0.15)  # 盈利15%启动移动止盈
+        self.trailing_stop_pct = self.params.get("trailing_stop_pct", 0.08)  # 移动止盈回撤8%卖出
 
         # 指标
         self.bottom_indicator = BottomTrendlineIndicator({
@@ -219,7 +216,7 @@ class TrendlineOversoldStrategy:
 
     def _check_take_profit(self, current_price: float, current_high: float) -> tuple:
         """
-        检查止盈条件
+        检查移动止盈条件（纯移动止盈模式）
 
         Returns:
             (should_sell, sell_pct, reason): 是否卖出, 卖出比例, 原因
@@ -233,18 +230,15 @@ class TrendlineOversoldStrategy:
         if current_high > self.state.highest_price:
             self.state.highest_price = current_high
 
-        # 1. 固定止盈：盈利超过15%，卖出50%
-        if gain >= self.take_profit_pct:
-            return True, 0.5, f"盈利{gain:.1%}达到止盈线{self.take_profit_pct:.0%}"
-
-        # 2. 移动止损：盈利超过10%后，从最高点回撤5%触发
+        # 移动止盈：盈利达到阈值后启动，从最高点回撤超过阈值时全部卖出
         if gain >= self.trailing_stop_trigger:
             self.state.trailing_stop_active = True
 
         if self.state.trailing_stop_active and self.state.highest_price > 0:
             drawdown = (self.state.highest_price - current_price) / self.state.highest_price
             if drawdown >= self.trailing_stop_pct:
-                return True, 1.0, f"移动止损触发: 从高点{self.state.highest_price:.2f}回撤{drawdown:.1%}"
+                highest_gain = (self.state.highest_price - self.state.avg_cost) / self.state.avg_cost
+                return True, 1.0, f"移动止盈: 最高盈利{highest_gain:.1%}, 回撤{drawdown:.1%}"
 
         return False, 0, ""
 
@@ -336,27 +330,16 @@ class TrendlineOversoldStrategy:
 
         # 5. 持仓状态下检查卖出信号
         if self.state.position > 0.1:
-            # 5.1 检查止盈/移动止损
-            should_take_profit, sell_pct, tp_reason = self._check_take_profit(current_price, current_high)
+            # 5.1 检查移动止盈
+            should_take_profit, _, tp_reason = self._check_take_profit(current_price, current_high)
             if should_take_profit:
-                if sell_pct >= 1.0:
-                    # 移动止损全部卖出
-                    return StrategySignal(
-                        date=current_date,
-                        action=PositionAction.SELL_ALL,
-                        price=current_price,
-                        reason=tp_reason,
-                        details={**details, "highest_price": self.state.highest_price},
-                    )
-                else:
-                    # 固定止盈卖出50%
-                    return StrategySignal(
-                        date=current_date,
-                        action=PositionAction.SELL_HALF,
-                        price=current_price,
-                        reason=tp_reason,
-                        details={**details, "highest_price": self.state.highest_price},
-                    )
+                return StrategySignal(
+                    date=current_date,
+                    action=PositionAction.SELL_ALL,
+                    price=current_price,
+                    reason=tp_reason,
+                    details={**details, "highest_price": self.state.highest_price},
+                )
 
             # 5.2 检查超涨价量背离
             is_overbought, ob_reasons = self._is_overbought_with_volume_divergence(data, rsi)
