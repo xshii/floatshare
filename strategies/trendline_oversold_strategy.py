@@ -95,9 +95,16 @@ class TrendlineOversoldStrategy:
         # 止损
         self.stop_loss_pct = self.params.get("stop_loss_pct", 0.10)
 
-        # 止盈参数（纯移动止盈模式）
-        self.trailing_stop_trigger = self.params.get("trailing_stop_trigger", 0.15)  # 盈利15%启动移动止盈
-        self.trailing_stop_pct = self.params.get("trailing_stop_pct", 0.08)  # 移动止盈回撤8%卖出
+        # 止盈参数 - 上升趋势（斜率>0）：放宽止盈，让利润跑
+        self.up_trailing_trigger = self.params.get("up_trailing_trigger", 0.25)  # 25%启动
+        self.up_trailing_pct = self.params.get("up_trailing_pct", 0.12)  # 12%回撤
+
+        # 止盈参数 - 下降趋势（斜率<=0）：收紧止盈，快速锁利
+        self.down_trailing_trigger = self.params.get("down_trailing_trigger", 0.10)  # 10%启动
+        self.down_trailing_pct = self.params.get("down_trailing_pct", 0.05)  # 5%回撤
+
+        # 是否启用趋势自适应（默认开启）
+        self.adaptive_mode = self.params.get("adaptive_mode", True)
 
         # 指标
         self.bottom_indicator = BottomTrendlineIndicator({
@@ -214,9 +221,14 @@ class TrendlineOversoldStrategy:
 
         return is_signal, reasons
 
-    def _check_take_profit(self, current_price: float, current_high: float) -> tuple:
+    def _check_take_profit(self, current_price: float, current_high: float, slope: float = 0) -> tuple:
         """
-        检查移动止盈条件（纯移动止盈模式）
+        检查移动止盈条件（趋势自适应模式）
+
+        Args:
+            current_price: 当前价格
+            current_high: 当日最高价
+            slope: 筑底线斜率，>0为上升趋势
 
         Returns:
             (should_sell, sell_pct, reason): 是否卖出, 卖出比例, 原因
@@ -230,15 +242,33 @@ class TrendlineOversoldStrategy:
         if current_high > self.state.highest_price:
             self.state.highest_price = current_high
 
+        # 根据趋势选择参数
+        if self.adaptive_mode:
+            if slope > 0:
+                # 上升趋势：放宽止盈
+                trigger = self.up_trailing_trigger
+                drawdown_pct = self.up_trailing_pct
+                trend_label = "↑"
+            else:
+                # 下降趋势：收紧止盈
+                trigger = self.down_trailing_trigger
+                drawdown_pct = self.down_trailing_pct
+                trend_label = "↓"
+        else:
+            # 非自适应模式，使用下降趋势参数作为默认
+            trigger = self.down_trailing_trigger
+            drawdown_pct = self.down_trailing_pct
+            trend_label = ""
+
         # 移动止盈：盈利达到阈值后启动，从最高点回撤超过阈值时全部卖出
-        if gain >= self.trailing_stop_trigger:
+        if gain >= trigger:
             self.state.trailing_stop_active = True
 
         if self.state.trailing_stop_active and self.state.highest_price > 0:
             drawdown = (self.state.highest_price - current_price) / self.state.highest_price
-            if drawdown >= self.trailing_stop_pct:
+            if drawdown >= drawdown_pct:
                 highest_gain = (self.state.highest_price - self.state.avg_cost) / self.state.avg_cost
-                return True, 1.0, f"移动止盈: 最高盈利{highest_gain:.1%}, 回撤{drawdown:.1%}"
+                return True, 1.0, f"移动止盈{trend_label}: 最高盈利{highest_gain:.1%}, 回撤{drawdown:.1%}(阈值{drawdown_pct:.0%})"
 
         return False, 0, ""
 
@@ -270,11 +300,17 @@ class TrendlineOversoldStrategy:
         rsi_result = self.rsi_indicator.calculate(data)
 
         support_price = bottom_result.get("support_price", 0)
+        slope = bottom_result.get("slope", 0)  # 筑底线斜率，用于趋势判断
         rsi = rsi_result.get("rsi", 50)
         volume_ratio = self._calculate_volume_ratio(data)
 
+        # 趋势判断
+        trend = "up" if slope > 0 else "down"
+
         details = {
             "support_price": support_price,
+            "slope": slope,
+            "trend": trend,
             "rsi": rsi,
             "volume_ratio": volume_ratio,
             "position": self.state.position,
@@ -330,15 +366,15 @@ class TrendlineOversoldStrategy:
 
         # 5. 持仓状态下检查卖出信号
         if self.state.position > 0.1:
-            # 5.1 检查移动止盈
-            should_take_profit, _, tp_reason = self._check_take_profit(current_price, current_high)
+            # 5.1 检查移动止盈（传入斜率用于趋势自适应）
+            should_take_profit, _, tp_reason = self._check_take_profit(current_price, current_high, slope)
             if should_take_profit:
                 return StrategySignal(
                     date=current_date,
                     action=PositionAction.SELL_ALL,
                     price=current_price,
                     reason=tp_reason,
-                    details={**details, "highest_price": self.state.highest_price},
+                    details={**details, "highest_price": self.state.highest_price, "trend": trend},
                 )
 
             # 5.2 检查超涨价量背离
