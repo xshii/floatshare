@@ -84,9 +84,9 @@ class TrendlineOversoldStrategy:
         self.wait_after_bottom = self.params.get("wait_after_bottom", 5)  # 筑底后等待天数
         self.lookback = self.params.get("lookback", 120)
 
-        # 超买超卖阈值
-        self.oversold_rsi = self.params.get("oversold_rsi", 30)
-        self.overbought_rsi = self.params.get("overbought_rsi", 70)
+        # 超买超卖阈值（优化后: oversold从30降至25, overbought从70降至65）
+        self.oversold_rsi = self.params.get("oversold_rsi", 25)
+        self.overbought_rsi = self.params.get("overbought_rsi", 65)
         self.support_break_threshold = self.params.get("support_break_threshold", 0.02)
 
         # 价量配合
@@ -96,12 +96,14 @@ class TrendlineOversoldStrategy:
         self.stop_loss_pct = self.params.get("stop_loss_pct", 0.10)
 
         # 止盈参数 - 上升趋势（斜率>0）：放宽止盈，让利润跑
-        self.up_trailing_trigger = self.params.get("up_trailing_trigger", 0.25)  # 25%启动
-        self.up_trailing_pct = self.params.get("up_trailing_pct", 0.12)  # 12%回撤
+        # 优化后: trigger从25%降至15%, pct从12%降至8%
+        self.up_trailing_trigger = self.params.get("up_trailing_trigger", 0.15)  # 15%启动
+        self.up_trailing_pct = self.params.get("up_trailing_pct", 0.08)  # 8%回撤
 
         # 止盈参数 - 下降趋势（斜率<=0）：收紧止盈，快速锁利
-        self.down_trailing_trigger = self.params.get("down_trailing_trigger", 0.10)  # 10%启动
-        self.down_trailing_pct = self.params.get("down_trailing_pct", 0.05)  # 5%回撤
+        # 优化后: trigger从10%降至5%, pct从5%降至3%
+        self.down_trailing_trigger = self.params.get("down_trailing_trigger", 0.05)  # 5%启动
+        self.down_trailing_pct = self.params.get("down_trailing_pct", 0.03)  # 3%回撤
 
         # 是否启用趋势自适应（默认开启）
         self.adaptive_mode = self.params.get("adaptive_mode", True)
