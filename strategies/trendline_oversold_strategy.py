@@ -592,3 +592,91 @@ class TrendlineOversoldStrategy:
             "trades": trades,
             "equity_curve": equity_df,
         }
+
+    def rolling_backtest(
+        self,
+        data: pd.DataFrame,
+        window_days: int = 180,
+        step_days: int = 90,
+        initial_capital: float = 100000,
+    ) -> Dict:
+        """
+        滚动回测：将数据分成多个时间窗口，每个窗口独立回测
+
+        Args:
+            data: 完整数据
+            window_days: 每个回测窗口的天数（默认180天/半年）
+            step_days: 窗口滚动步长（默认90天/季度）
+            initial_capital: 初始资金
+
+        Returns:
+            包含每个窗口结果和汇总统计的字典
+        """
+        if len(data) < self.lookback + window_days:
+            return {"error": "数据不足", "windows": []}
+
+        windows = []
+        start_idx = self.lookback
+
+        while start_idx + window_days <= len(data):
+            # 取当前窗口数据（包含预热期）
+            window_data = data.iloc[start_idx - self.lookback : start_idx + window_days].copy()
+
+            # 获取窗口日期范围
+            if "trade_date" in window_data.columns:
+                start_date = window_data["trade_date"].iloc[self.lookback]
+                end_date = window_data["trade_date"].iloc[-1]
+            else:
+                start_date = start_idx
+                end_date = start_idx + window_days
+
+            # 回测当前窗口
+            result = self.backtest(window_data, initial_capital)
+
+            # 计算同期买入持有收益
+            first_price = window_data["close"].iloc[self.lookback]
+            last_price = window_data["close"].iloc[-1]
+            buy_hold = (last_price - first_price) / first_price
+
+            windows.append({
+                "start_date": start_date,
+                "end_date": end_date,
+                "strategy_return": result["total_return"],
+                "buy_hold": buy_hold,
+                "excess": result["total_return"] - buy_hold,
+                "max_drawdown": result["max_drawdown"],
+                "trades": result["total_trades"],
+                "sharpe": result["sharpe_ratio"],
+            })
+
+            start_idx += step_days
+
+        # 汇总统计
+        if windows:
+            avg_return = sum(w["strategy_return"] for w in windows) / len(windows)
+            avg_buyhold = sum(w["buy_hold"] for w in windows) / len(windows)
+            avg_excess = sum(w["excess"] for w in windows) / len(windows)
+            avg_drawdown = sum(w["max_drawdown"] for w in windows) / len(windows)
+            win_count = sum(1 for w in windows if w["excess"] > 0)
+            win_rate = win_count / len(windows)
+
+            # 收益标准差（稳定性）
+            returns = [w["strategy_return"] for w in windows]
+            return_std = np.std(returns) if len(returns) > 1 else 0
+
+            summary = {
+                "total_windows": len(windows),
+                "avg_return": avg_return,
+                "avg_buyhold": avg_buyhold,
+                "avg_excess": avg_excess,
+                "avg_drawdown": avg_drawdown,
+                "win_rate": win_rate,
+                "return_std": return_std,
+            }
+        else:
+            summary = {}
+
+        return {
+            "windows": windows,
+            "summary": summary,
+        }
