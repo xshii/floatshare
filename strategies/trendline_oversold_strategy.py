@@ -7,6 +7,9 @@
 4. 超涨且价量不匹配时卖出10%（RSI>70 + 量比缩小）
 5. 每次超跌补满全仓
 6. 止损线为买入均价的-10%
+7. 止盈规则：
+   - 盈利15%时卖出50%（固定止盈）
+   - 盈利10%后启动移动止损，从最高点回撤5%时全部卖出
 """
 
 from dataclasses import dataclass, field
@@ -29,6 +32,8 @@ class PositionAction(Enum):
     BUY_FULL = "buy_full"           # 全仓买入
     BUY_REFILL = "buy_refill"       # 补仓到满仓
     SELL_10PCT = "sell_10pct"       # 卖出10%
+    SELL_HALF = "sell_half"         # 止盈卖出50%
+    SELL_ALL = "sell_all"           # 移动止损全部卖出
     STOP_LOSS = "stop_loss"         # 止损卖出
 
 
@@ -48,6 +53,10 @@ class StrategyState:
     # 频繁筑底追踪
     valid_bottoms: int = 0              # 有效筑底次数
     last_bottom_idx: int = -1           # 上一次筑底的索引
+
+    # 移动止盈
+    highest_price: float = 0.0          # 持仓期间最高价
+    trailing_stop_active: bool = False  # 移动止损是否激活
 
     # 交易记录
     trades: List[Dict] = field(default_factory=list)
@@ -87,6 +96,11 @@ class TrendlineOversoldStrategy:
 
         # 止损
         self.stop_loss_pct = self.params.get("stop_loss_pct", 0.10)
+
+        # 止盈参数
+        self.take_profit_pct = self.params.get("take_profit_pct", 0.15)  # 盈利15%止盈
+        self.trailing_stop_trigger = self.params.get("trailing_stop_trigger", 0.10)  # 盈利10%启动移动止损
+        self.trailing_stop_pct = self.params.get("trailing_stop_pct", 0.05)  # 移动止损回撤5%
 
         # 指标
         self.bottom_indicator = BottomTrendlineIndicator({
@@ -203,6 +217,37 @@ class TrendlineOversoldStrategy:
 
         return is_signal, reasons
 
+    def _check_take_profit(self, current_price: float, current_high: float) -> tuple:
+        """
+        检查止盈条件
+
+        Returns:
+            (should_sell, sell_pct, reason): 是否卖出, 卖出比例, 原因
+        """
+        if self.state.avg_cost <= 0:
+            return False, 0, ""
+
+        gain = (current_price - self.state.avg_cost) / self.state.avg_cost
+
+        # 更新最高价
+        if current_high > self.state.highest_price:
+            self.state.highest_price = current_high
+
+        # 1. 固定止盈：盈利超过15%，卖出50%
+        if gain >= self.take_profit_pct:
+            return True, 0.5, f"盈利{gain:.1%}达到止盈线{self.take_profit_pct:.0%}"
+
+        # 2. 移动止损：盈利超过10%后，从最高点回撤5%触发
+        if gain >= self.trailing_stop_trigger:
+            self.state.trailing_stop_active = True
+
+        if self.state.trailing_stop_active and self.state.highest_price > 0:
+            drawdown = (self.state.highest_price - current_price) / self.state.highest_price
+            if drawdown >= self.trailing_stop_pct:
+                return True, 1.0, f"移动止损触发: 从高点{self.state.highest_price:.2f}回撤{drawdown:.1%}"
+
+        return False, 0, ""
+
     def _calculate_volume_ratio(self, data: pd.DataFrame) -> float:
         """计算量比"""
         if len(data) < 6:
@@ -223,6 +268,7 @@ class TrendlineOversoldStrategy:
 
         current_price = data["close"].iloc[-1]
         current_low = data["low"].iloc[-1]
+        current_high = data["high"].iloc[-1]
         current_date = data["trade_date"].iloc[-1] if "trade_date" in data.columns else datetime.now()
 
         # 1. 计算指标
@@ -290,6 +336,29 @@ class TrendlineOversoldStrategy:
 
         # 5. 持仓状态下检查卖出信号
         if self.state.position > 0.1:
+            # 5.1 检查止盈/移动止损
+            should_take_profit, sell_pct, tp_reason = self._check_take_profit(current_price, current_high)
+            if should_take_profit:
+                if sell_pct >= 1.0:
+                    # 移动止损全部卖出
+                    return StrategySignal(
+                        date=current_date,
+                        action=PositionAction.SELL_ALL,
+                        price=current_price,
+                        reason=tp_reason,
+                        details={**details, "highest_price": self.state.highest_price},
+                    )
+                else:
+                    # 固定止盈卖出50%
+                    return StrategySignal(
+                        date=current_date,
+                        action=PositionAction.SELL_HALF,
+                        price=current_price,
+                        reason=tp_reason,
+                        details={**details, "highest_price": self.state.highest_price},
+                    )
+
+            # 5.2 检查超涨价量背离
             is_overbought, ob_reasons = self._is_overbought_with_volume_divergence(data, rsi)
             if is_overbought:
                 return StrategySignal(
@@ -371,6 +440,9 @@ class TrendlineOversoldStrategy:
                     self.state.avg_cost = current_price
                     self.state.stop_loss_price = current_price * (1 - self.stop_loss_pct)
                     self.state.last_buy_date = current_date
+                    # 重置止盈跟踪状态
+                    self.state.highest_price = current_price
+                    self.state.trailing_stop_active = False
                     trades.append({
                         "date": current_date,
                         "action": "BUY_FULL",
@@ -423,6 +495,53 @@ class TrendlineOversoldStrategy:
                         "reason": signal.reason,
                     })
 
+            elif signal.action == PositionAction.SELL_HALF:
+                # 止盈卖出50%
+                sell_shares = int(shares * 0.5 / 100) * 100
+                if sell_shares > 0:
+                    revenue = sell_shares * current_price
+                    gain_pct = (current_price - self.state.avg_cost) / self.state.avg_cost
+                    capital += revenue
+                    shares -= sell_shares
+                    self.state.total_shares = shares
+                    self.state.position = shares * current_price / (capital + shares * current_price) if (capital + shares * current_price) > 0 else 0
+                    trades.append({
+                        "date": current_date,
+                        "action": "SELL_HALF",
+                        "price": current_price,
+                        "shares": sell_shares,
+                        "amount": revenue,
+                        "gain": gain_pct,
+                        "reason": signal.reason,
+                    })
+
+            elif signal.action == PositionAction.SELL_ALL:
+                # 移动止损全部卖出
+                if shares > 0:
+                    revenue = shares * current_price
+                    gain_pct = (current_price - self.state.avg_cost) / self.state.avg_cost
+                    capital += revenue
+                    trades.append({
+                        "date": current_date,
+                        "action": "SELL_ALL",
+                        "price": current_price,
+                        "shares": shares,
+                        "amount": revenue,
+                        "gain": gain_pct,
+                        "highest_price": self.state.highest_price,
+                        "reason": signal.reason,
+                    })
+                    shares = 0
+                    self.state.position = 0
+                    self.state.total_shares = 0
+                    self.state.avg_cost = 0
+                    self.state.stop_loss_price = 0
+                    self.state.highest_price = 0
+                    self.state.trailing_stop_active = False
+                    # 重置筑底状态，重新寻找机会
+                    self.state.bottom_confirmed = False
+                    self.state.bottom_confirm_date = None
+
             elif signal.action == PositionAction.STOP_LOSS:
                 if shares > 0:
                     revenue = shares * signal.price
@@ -442,6 +561,8 @@ class TrendlineOversoldStrategy:
                     self.state.total_shares = 0
                     self.state.avg_cost = 0
                     self.state.stop_loss_price = 0
+                    self.state.highest_price = 0
+                    self.state.trailing_stop_active = False
                     # 重置筑底状态，重新寻找机会
                     self.state.bottom_confirmed = False
                     self.state.bottom_confirm_date = None
