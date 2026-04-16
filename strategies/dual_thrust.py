@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import backtrader as bt
 
-from src.strategy.registry import StrategyRegistry
+from floatshare.strategy import register
 
 
-@StrategyRegistry.register("dual_thrust")
+@register("dual_thrust")
 class DualThrustStrategy(bt.Strategy):
     """基于前 N 日 HH/HC/LC/LL 计算 Range，价格突破上轨买入、下轨卖出。"""
 
@@ -23,27 +23,20 @@ class DualThrustStrategy(bt.Strategy):
 
     def __init__(self) -> None:
         self.hh = {
-            d._name: bt.indicators.Highest(d.high, period=self.p.lookback)
-            for d in self.datas
+            d._name: bt.indicators.Highest(d.high, period=self.p.lookback) for d in self.datas
         }
-        self.ll = {
-            d._name: bt.indicators.Lowest(d.low, period=self.p.lookback)
-            for d in self.datas
-        }
+        self.ll = {d._name: bt.indicators.Lowest(d.low, period=self.p.lookback) for d in self.datas}
         self.hc = {
-            d._name: bt.indicators.Highest(d.close, period=self.p.lookback)
-            for d in self.datas
+            d._name: bt.indicators.Highest(d.close, period=self.p.lookback) for d in self.datas
         }
         self.lc = {
-            d._name: bt.indicators.Lowest(d.close, period=self.p.lookback)
-            for d in self.datas
+            d._name: bt.indicators.Lowest(d.close, period=self.p.lookback) for d in self.datas
         }
 
     def next(self) -> None:
         for d in self.datas:
             if len(d) <= self.p.lookback:
                 continue
-            # 用前一根 bar 的统计来计算 range（避免未来函数）
             hh = self.hh[d._name][-1]
             ll = self.ll[d._name][-1]
             hc = self.hc[d._name][-1]

@@ -4,11 +4,11 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "floatshare"
-version = "0.1.0"
-description = "股票量化交易系统"
+version = "0.2.0"
+description = "个人量化交易框架"
 readme = "README.md"
 license = {text = "MIT"}
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 authors = [
     {name = "FloatShare Team"}
 ]
@@ -18,7 +18,6 @@ classifiers = [
     "Intended Audience :: Financial and Insurance Industry",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
@@ -48,9 +47,10 @@ dependencies = [
 dev = [
     "pytest>=7.0.0",
     "pytest-cov>=4.0.0",
-    "black>=23.0.0",
-    "ruff>=0.1.0",
-    "mypy>=1.0.0",
+    "ruff>=0.5.0",
+    "mypy>=1.10.0",
+    "pyright>=1.1.400",
+    "import-linter>=2.0",
 ]
 tushare = [
     "tushare>=1.2.0",
@@ -65,58 +65,184 @@ Documentation = "https://github.com/floatshare/floatshare#readme"
 Repository = "https://github.com/floatshare/floatshare"
 
 [project.scripts]
-floatshare = "scripts.run_backtest:main"
+floatshare-backtest = "floatshare.cli.run_backtest:main"
 
+# --- src layout ----------------------------------------------------------------
 [tool.setuptools.packages.find]
-where = ["."]
-include = ["src*", "config*", "strategies*"]
+where = ["src"]
+include = ["floatshare*"]
 
+# --- pytest --------------------------------------------------------------------
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
-addopts = "-v --tb=short"
+addopts = "-v --tb=short --strict-markers"
+pythonpath = ["src", "."]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore::PendingDeprecationWarning",
+]
 
-[tool.black]
-line-length = 88
-target-version = ["py310", "py311", "py312", "py313"]
-include = '\.pyi?$'
-exclude = '''
-/(
-    \.git
-    | \.mypy_cache
-    | \.pytest_cache
-    | \.venv
-    | venv
-    | __pycache__
-    | data
-    | logs
-)/
-'''
-
+# --- ruff ----------------------------------------------------------------------
 [tool.ruff]
-line-length = 88
-target-version = "py310"
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+extend-exclude = ["data", "logs", "notebooks", "prettycli"]
+
+[tool.ruff.lint]
 select = [
-    "E",   # pycodestyle errors
-    "W",   # pycodestyle warnings
-    "F",   # Pyflakes
-    "I",   # isort
-    "B",   # flake8-bugbear
-    "C4",  # flake8-comprehensions
-    "UP",  # pyupgrade
+    "E", "W",     # pycodestyle
+    "F",          # pyflakes
+    "I",          # isort
+    "B",          # bugbear
+    "C4",         # comprehensions
+    "UP",         # pyupgrade — 强制新式 type hint
+    "SIM",        # simplify
+    "RUF",        # ruff-specific
+    "PT",         # pytest style
+    "TID",        # tidy-imports
+    "PIE",        # misc lints
+    "ARG",        # unused arguments
+    "PL",         # pylint subset
+    "RET",        # return statements
+    "PERF",       # perf anti-patterns
 ]
 ignore = [
-    "E501",  # line too long (handled by black)
-    "B008",  # do not perform function calls in argument defaults
+    "E501",    # line length handled formatter
+    "B008",    # function call in default arg
+    "PLR0913", # too many args (run_backtest 7 个参数刻意保留)
+    "PLR2004", # magic value comparison（测试里允许）
+    "PLR0911", # too many returns
+    "PLR0912", # too many branches
+    "PLR0915", # too many statements
+    "PLW0603", # global statement
+    "PERF203", # try/except in loop（数据源降级是必要的）
+    "PLC0415", # 允许函数内 import（lazy loading + composition root）
+    "RUF001",  # ambiguous chinese punctuation
+    "RUF002",
+    "RUF003",
+    "BLE001",  # blind except 在数据源降级里是合法的
+    "PLC0207", # split maxsplit 优化噪音
+    "ARG002",  # Protocol 实现方法允许 unused arg
+    "PT004",   # fixture name underscore 不是问题
 ]
 
-[tool.ruff.isort]
-known-first-party = ["src", "config", "strategies"]
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401"]
+"tests/**" = ["ARG", "PLR2004", "S101"]
 
+[tool.ruff.lint.isort]
+known-first-party = ["floatshare", "strategies"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+# --- mypy ----------------------------------------------------------------------
 [tool.mypy]
-python_version = "3.10"
-warn_return_any = true
+python_version = "3.11"
+mypy_path = "src"
+explicit_package_bases = true
+namespace_packages = true
 warn_unused_ignores = true
+warn_redundant_casts = true
 ignore_missing_imports = true
+disallow_untyped_defs = false
+check_untyped_defs = true
+no_implicit_optional = true
+strict_equality = true
+files = ["src/floatshare", "strategies"]
+
+[[tool.mypy.overrides]]
+module = ["ta.*", "quantstats.*", "akshare.*", "tushare.*", "apprise.*"]
+ignore_missing_imports = true
+
+# backtrader 通过本地 stubs/backtrader/__init__.pyi 提供类型，无需 ignore
+
+# --- pyright (pylance 的底层) --------------------------------------------------
+[tool.pyright]
+include = ["src/floatshare", "strategies", "tests"]
+exclude = ["**/__pycache__", ".venv", "data", "logs", "notebooks", "prettycli"]
+venvPath = "."
+venv = ".venv"
+pythonVersion = "3.11"
+pythonPlatform = "Darwin"
+typeCheckingMode = "basic"
+extraPaths = ["src"]
+stubPath = "stubs"
+reportMissingImports = "warning"
+reportMissingTypeStubs = "none"
+reportUnknownMemberType = "none"
+reportUnknownVariableType = "none"
+reportUnknownArgumentType = "none"
+reportUnknownLambdaType = "none"
+reportGeneralTypeIssues = "warning"
+reportArgumentType = "warning"
+reportPrivateUsage = "none"
+reportUnusedImport = "warning"
+useLibraryCodeForTypes = true
+strictListInference = true
+strictDictionaryInference = true
+strictSetInference = true
+
+# --- import-linter (依赖单向流向) ----------------------------------------------
+[tool.importlinter]
+root_package = "floatshare"
+
+[[tool.importlinter.contracts]]
+name = "Layered architecture: cli → application → infrastructure → strategy/risk/analytics → interfaces/observability → domain"
+type = "layers"
+layers = [
+    "floatshare.cli",
+    "floatshare.application",
+    "floatshare.infrastructure",
+    "floatshare.strategy | floatshare.risk | floatshare.analytics",
+    "floatshare.interfaces | floatshare.observability",
+    "floatshare.domain",
+]
+
+[[tool.importlinter.contracts]]
+name = "Domain 不依赖任何 floatshare 子模块"
+type = "forbidden"
+source_modules = ["floatshare.domain"]
+forbidden_modules = [
+    "floatshare.application",
+    "floatshare.infrastructure",
+    "floatshare.interfaces",
+    "floatshare.observability",
+    "floatshare.strategy",
+    "floatshare.risk",
+    "floatshare.analytics",
+    "floatshare.cli",
+]
+
+[[tool.importlinter.contracts]]
+name = "Interfaces 只能依赖 domain"
+type = "forbidden"
+source_modules = ["floatshare.interfaces"]
+forbidden_modules = [
+    "floatshare.application",
+    "floatshare.infrastructure",
+    "floatshare.observability",
+    "floatshare.strategy",
+    "floatshare.risk",
+    "floatshare.analytics",
+    "floatshare.cli",
+]
+
+[[tool.importlinter.contracts]]
+name = "Strategy/Risk/Analytics 不依赖 infrastructure 与 application"
+type = "forbidden"
+source_modules = [
+    "floatshare.strategy",
+    "floatshare.risk",
+    "floatshare.analytics",
+]
+forbidden_modules = [
+    "floatshare.infrastructure",
+    "floatshare.application",
+    "floatshare.cli",
+]

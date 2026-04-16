@@ -1,24 +1,17 @@
 #!/usr/bin/env python
-"""初始化数据库"""
+"""初始化本地 SQLite 数据库表。"""
 
-import sys
-from pathlib import Path
+from __future__ import annotations
 
-# 添加项目根目录到路径
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
-from src.data.storage.database import DatabaseStorage
+from floatshare.infrastructure.storage import DatabaseStorage
+from floatshare.observability import logger
 
 
-def main():
-    """初始化数据库表"""
-    print("正在初始化数据库...")
-
+def main() -> None:
+    logger.info("初始化数据库...")
     storage = DatabaseStorage()
     storage.init_tables()
-
-    print("数据库初始化完成!")
-    print(f"数据库路径: {storage.db_path}")
+    logger.info(f"数据库初始化完成: {storage.db_path}")
 
 
 if __name__ == "__main__":
