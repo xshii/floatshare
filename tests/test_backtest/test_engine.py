@@ -1,93 +1,84 @@
-"""回测引擎测试"""
+"""回测引擎测试 — 基于 backtrader runner。"""
 
-import pytest
-import pandas as pd
-from datetime import date
+from __future__ import annotations
 
-from src.backtest.engine import BacktestEngine
-from src.strategy.base import Strategy, Signal, StrategyContext
+import backtrader as bt
 
-
-class SimpleStrategy(Strategy):
-    """简单测试策略"""
-
-    name = "SimpleTest"
-
-    def init(self, context: StrategyContext) -> None:
-        pass
-
-    def handle_data(self, context: StrategyContext, data: pd.DataFrame) -> list:
-        signals = []
-
-        for code in data["code"].unique():
-            has_position = code in context.positions and context.positions[code] > 0
-
-            # 简单逻辑：没持仓就买，有持仓就持有
-            if not has_position:
-                signals.append(Signal(
-                    code=code,
-                    direction="buy",
-                    strength=0.5,
-                    price=data[data["code"] == code]["close"].iloc[0],
-                ))
-
-        return signals
+from src.backtest import BacktestResult, run_backtest
+from src.strategy.registry import StrategyRegistry
 
 
-class TestBacktestEngine:
-    """回测引擎测试"""
+class BuyAndHoldStrategy(bt.Strategy):
+    """最简单的 buy-and-hold：第一根 bar 就买。"""
 
-    def test_engine_initialization(self):
-        """测试引擎初始化"""
-        engine = BacktestEngine(
+    name = "BuyAndHold"
+
+    def next(self) -> None:
+        for d in self.datas:
+            if not self.getposition(d).size:
+                cash = self.broker.getcash()
+                target = cash * 0.5 / len(self.datas)
+                size = int(target / d.close[0] / 100) * 100
+                if size > 0:
+                    self.buy(data=d, size=size)
+
+
+class TestBacktestRunner:
+    def test_run_single_stock(self, sample_daily_data):
+        result = run_backtest(
+            strategy_cls=BuyAndHoldStrategy,
+            data=sample_daily_data,
             initial_capital=1_000_000,
-            commission=0.0003,
-            slippage=0.001,
         )
+        assert isinstance(result, BacktestResult)
+        assert result.initial_capital == 1_000_000
+        assert result.final_value > 0
+        assert len(result.returns) > 0
 
-        assert engine.initial_capital == 1_000_000
-        assert engine.trading_config.commission_rate == 0.0003
-        assert engine.trading_config.slippage == 0.001
-
-    def test_run_backtest(self, sample_daily_data):
-        """测试运行回测"""
-        engine = BacktestEngine(initial_capital=1_000_000)
-        strategy = SimpleStrategy()
-
-        report = engine.run(
-            strategy=strategy,
-            data=sample_daily_data,
-        )
-
-        assert report is not None
-        assert report.initial_capital == 1_000_000
-        assert report.final_value > 0
-
-    def test_backtest_with_multiple_stocks(self, multi_stock_data):
-        """测试多股票回测"""
-        engine = BacktestEngine(initial_capital=1_000_000)
-        strategy = SimpleStrategy()
-
-        report = engine.run(
-            strategy=strategy,
+    def test_run_multi_stock(self, multi_stock_data):
+        result = run_backtest(
+            strategy_cls=BuyAndHoldStrategy,
             data=multi_stock_data,
+            initial_capital=1_000_000,
         )
+        assert result.final_value > 0
+        assert len(result.daily_data) > 0
 
-        assert report is not None
-        assert len(report.daily_data) > 0
-
-    def test_backtest_report_metrics(self, sample_daily_data):
-        """测试回测报告指标"""
-        engine = BacktestEngine(initial_capital=1_000_000)
-        strategy = SimpleStrategy()
-
-        report = engine.run(
-            strategy=strategy,
+    def test_metrics_are_floats(self, sample_daily_data):
+        result = run_backtest(
+            strategy_cls=BuyAndHoldStrategy,
             data=sample_daily_data,
+            initial_capital=1_000_000,
         )
+        assert isinstance(result.total_return, float)
+        assert isinstance(result.annual_return, float)
+        assert isinstance(result.max_drawdown, float)
+        assert isinstance(result.sharpe_ratio, float)
 
-        # 检查指标计算
-        assert isinstance(report.total_return, float)
-        assert isinstance(report.annual_return, float)
-        assert isinstance(report.max_drawdown, float)
-        assert isinstance(report.sharpe_ratio, float)
+
+class TestRegisteredStrategies:
+    def test_ma_cross_runs(self, sample_daily_data):
+        # 触发注册
+        import strategies  # noqa: F401
+
+        cls = StrategyRegistry.get("ma_cross")
+        assert cls is not None
+        result = run_backtest(
+            strategy_cls=cls,
+            data=sample_daily_data,
+            initial_capital=1_000_000,
+            strategy_params={"short_period": 5, "long_period": 20},
+        )
+        assert result.final_value > 0
+
+    def test_dual_thrust_runs(self, sample_daily_data):
+        import strategies  # noqa: F401
+
+        cls = StrategyRegistry.get("dual_thrust")
+        assert cls is not None
+        result = run_backtest(
+            strategy_cls=cls,
+            data=sample_daily_data,
+            initial_capital=1_000_000,
+        )
+        assert result.final_value > 0

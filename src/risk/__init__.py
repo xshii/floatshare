@@ -1,7 +1,5 @@
-"""风险管理系统"""
+"""风险管理 — 仅保留参数化的 RiskLimits。"""
 
-from .manager import RiskManager
 from .limits import RiskLimits
-from .exposure import ExposureCalculator
 
-__all__ = ["RiskManager", "RiskLimits", "ExposureCalculator"]
+__all__ = ["RiskLimits"]

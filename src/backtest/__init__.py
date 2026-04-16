@@ -1,8 +1,5 @@
-"""回测系统"""
+"""回测工具 — 基于 backtrader 的薄封装。"""
 
-from .engine import BacktestEngine
-from .context import BacktestContext
-from .matcher import OrderMatcher
-from .report import BacktestReport
+from .runner import BacktestResult, run_backtest
 
-__all__ = ["BacktestEngine", "BacktestContext", "OrderMatcher", "BacktestReport"]
+__all__ = ["BacktestResult", "run_backtest"]

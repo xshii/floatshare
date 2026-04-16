@@ -45,10 +45,8 @@ class DataCleaner:
 
         for col in price_cols:
             if col in df.columns:
-                # 使用前值填充
-                df[col] = df[col].fillna(method="ffill")
-                # 再用后值填充剩余的
-                df[col] = df[col].fillna(method="bfill")
+                # 前值填充再后值兜底
+                df[col] = df[col].ffill().bfill()
 
         # 成交量和成交额缺失填0
         if "volume" in df.columns:
@@ -82,7 +80,7 @@ class DataCleaner:
                 # 将异常值替换为前值
                 if outliers.any():
                     df.loc[outliers, col] = np.nan
-                    df[col] = df[col].fillna(method="ffill")
+                    df[col] = df[col].ffill()
 
         return df
 

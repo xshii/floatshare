@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "股票量化交易系统"
 readme = "README.md"
 license = {text = "MIT"}
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 authors = [
     {name = "FloatShare Team"}
 ]
@@ -18,16 +18,30 @@ classifiers = [
     "Intended Audience :: Financial and Insurance Industry",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
 ]
 dependencies = [
+    # 数据处理
     "pandas>=2.0.0",
     "numpy>=1.24.0",
     "sqlalchemy>=2.0.0",
+    # 数据源
     "akshare>=1.10.0",
+    # 回测引擎
+    "backtrader>=1.9.78",
+    # 技术因子
+    "ta>=0.11.0",
+    # 绩效分析
+    "quantstats>=0.0.62",
+    # 日志/告警
+    "loguru>=0.7.0",
+    "apprise>=1.7.0",
+    # 配置/环境
+    "pydantic>=2.0",
+    "python-dotenv>=1.0",
 ]
 
 [project.optional-dependencies]
@@ -41,12 +55,8 @@ dev = [
 tushare = [
     "tushare>=1.2.0",
 ]
-visualization = [
-    "matplotlib>=3.7.0",
-    "seaborn>=0.12.0",
-]
 all = [
-    "floatshare[dev,tushare,visualization]",
+    "floatshare[dev,tushare]",
 ]
 
 [project.urls]
@@ -70,7 +80,7 @@ addopts = "-v --tb=short"
 
 [tool.black]
 line-length = 88
-target-version = ["py39", "py310", "py311"]
+target-version = ["py310", "py311", "py312", "py313"]
 include = '\.pyi?$'
 exclude = '''
 /(
@@ -87,7 +97,7 @@ exclude = '''
 
 [tool.ruff]
 line-length = 88
-target-version = "py39"
+target-version = "py310"
 select = [
     "E",   # pycodestyle errors
     "W",   # pycodestyle warnings
@@ -106,7 +116,7 @@ ignore = [
 known-first-party = ["src", "config", "strategies"]
 
 [tool.mypy]
-python_version = "3.9"
+python_version = "3.10"
 warn_return_any = true
 warn_unused_ignores = true
 ignore_missing_imports = true

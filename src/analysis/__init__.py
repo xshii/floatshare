@@ -1,7 +1,5 @@
-"""绩效分析系统"""
+"""绩效分析 — 薄封装 quantstats / empyrical"""
 
-from .metrics import PerformanceMetrics
-from .attribution import AttributionAnalyzer
-from .visualization import ChartGenerator
+from .report import metrics as metrics, html_report as html_report
 
-__all__ = ["PerformanceMetrics", "AttributionAnalyzer", "ChartGenerator"]
+__all__ = ["metrics", "html_report"]

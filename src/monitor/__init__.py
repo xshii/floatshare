@@ -1,7 +1,6 @@
-"""监控告警系统"""
+"""日志与告警 — 薄封装 loguru + apprise"""
 
-from .health import HealthChecker
-from .alert import AlertManager, Alert
-from .logger import Logger
+from loguru import logger as logger
+from .alert import notify as notify
 
-__all__ = ["HealthChecker", "AlertManager", "Alert", "Logger"]
+__all__ = ["logger", "notify"]

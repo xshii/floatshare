@@ -1,6 +1,6 @@
-"""策略实现"""
+"""策略实现集合 — 导入即注册。"""
 
-from .ma_cross import MACrossStrategy
 from .dual_thrust import DualThrustStrategy
+from .ma_cross import MACrossStrategy
 
-__all__ = ["MACrossStrategy", "DualThrustStrategy"]
+__all__ = ["DualThrustStrategy", "MACrossStrategy"]
