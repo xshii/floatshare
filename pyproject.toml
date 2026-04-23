@@ -87,6 +87,7 @@ floatshare-web = "floatshare.web.app:main"
 floatshare-train-ppo = "floatshare.ml.train:main"
 floatshare-eval-ppo = "floatshare.cli.run_eval_ppo:main"
 floatshare-train-pop = "floatshare.ml.train_pop:main"
+floatshare-train-grpo = "floatshare.ml.train_grpo:main"
 
 # --- src layout ----------------------------------------------------------------
 [tool.setuptools.packages.find]
