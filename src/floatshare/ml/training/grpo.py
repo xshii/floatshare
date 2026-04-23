@@ -35,8 +35,7 @@ from floatshare.ml.rl.env import MarketEnv
 from floatshare.ml.rl.grpo import grpo_update
 from floatshare.ml.rl.rollout import (
     RolloutBatch,
-    make_dist_from_logits,
-    select_action_logits,
+    _sample_action,
     state_to_tensors,
 )
 from floatshare.ml.training.base import BaseTrainer
@@ -229,41 +228,68 @@ def _collect_group_rollout(
     device: torch.device,
     model_cfg,
 ) -> RolloutBatch:
-    """Group rollout: 每个 state 采 G 个 action, 共记录 T*G 条 (state, action, reward).
+    """Group rollout: 每步在同一 state 下采 G 个 action, 各 peek 一个 reward.
 
-    实现: 每步同一 state forward 一次, 采 G 个 Dirichlet sample, step env G 次拿 G 个 reward.
-    env 必须支持 peek 式 step (不修改 state), 或 rollback. MarketEnv 当前不支持,
-    skeleton 用简化做法: 执行第 1 个 action 前进, 其它 G-1 个 reward 用 env.peek_reward(a).
+    收集 T × G 条 (state, action, log_prob, reward), states 按
+    [s_0_g0, s_0_g1, ..., s_0_gG-1, s_1_g0, ...] 展平 — 与 group_advantage
+    的 (N/G, G) reshape 布局一致.
 
-    ⚠️ 本函数 skeleton: env.peek_reward 方法尚未实现, 本函数先按单 action rollout 落地,
-    留 TODO 给 MarketEnv 加 peek_reward 接口. 完整 GRPO 启用前需补齐.
+    实现要点:
+        1. model forward 1 次 → ActionOut (policy at state s_t)
+        2. 对同一 policy 采 G 个 Dirichlet sample → G 个 (weights, log_prob)
+        3. env.peek_reward(weights_g) 算 reward, **不改 env.t / prev_weights**
+        4. env.step(weights_first) 真正推进 — 用第一个 sample 作为"实际执行"
+           (任选其一即可, 组相对 advantage 对推进路径不敏感)
+
+    done 时重置 env; 最后 group_size 条记录的 done=True 让 KL/advantage 分组边界清晰.
     """
-    from floatshare.ml.rl.rollout import collect_rollout
+    states_group: list = []
+    actions_group: list[Tensor] = []
+    log_probs_group: list[Tensor] = []
+    rewards_group: list[float] = []
+    dones_group: list[bool] = []
 
-    # 临时降级: 单 action rollout, 然后 batch.rewards 尾部 repeat 到 T*G.
-    # 仅为让 skeleton 能跑通 training/tests, 不是生产正确实现.
-    base = collect_rollout(env, model, n_steps, device, model_cfg)
+    state = env.reset()
+    for _step in range(n_steps):
+        x, tt, ind, mask = state_to_tensors(state, device)
+        with torch.no_grad():
+            out = model(x, tt, ind, mask)
 
-    # 扩展到 T*G: 每个 state 重复 G 次 (临时占位, 实际应采 G 个不同 action)
-    T = base.rewards.shape[0]
-    # TODO: 实现真 group sample; 现在仅用 base 数据 + 加噪模拟 G-1 个 sample
-    noise = torch.randn(T, group_size - 1) * 0.01
-    rewards_group = torch.cat(
-        [base.rewards.unsqueeze(1), base.rewards.unsqueeze(1) + noise], dim=1
-    ).view(-1)
-    actions_group = base.actions.repeat_interleave(group_size, dim=0)
-    log_probs_group = base.log_probs.repeat_interleave(group_size)
-    states_group = [s for s in base.states for _ in range(group_size)]
+        # G 个 (action, log_prob, reward) 在同一 state 下
+        first_weights_np: np.ndarray | None = None
+        for g in range(group_size):
+            weights, log_prob = _sample_action(out, mask, model_cfg.n_industries)
+            weights_np = weights[0].cpu().numpy().astype(np.float32)
+            reward = env.peek_reward(weights_np)
+            states_group.append(state)
+            actions_group.append(weights[0].cpu())
+            log_probs_group.append(log_prob[0].cpu())
+            rewards_group.append(reward)
+            dones_group.append(False)
+            if g == 0:
+                first_weights_np = weights_np
+
+        # 用第 0 个 action 推进 env (peek 过了不算, step 会再算一次但反正要 mutate)
+        assert first_weights_np is not None
+        _, next_state, done = env.step(first_weights_np)
+        if done:
+            # 标记本组 G 条 done=True (advantage 分组边界在 group_size 整数倍上天然对齐)
+            for i in range(1, group_size + 1):
+                dones_group[-i] = True
+            state = env.reset()
+        else:
+            assert next_state is not None
+            state = next_state
 
     return RolloutBatch(
         states=states_group,
-        actions=actions_group,
-        log_probs=log_probs_group,
-        values=base.values.repeat_interleave(group_size),  # 占位, GRPO 不用
-        rewards=rewards_group,
-        dones=base.dones.repeat_interleave(group_size),
+        actions=torch.stack(actions_group),
+        log_probs=torch.stack(log_probs_group),
+        values=torch.zeros(len(rewards_group), dtype=torch.float32),  # GRPO 不用
+        rewards=torch.tensor(rewards_group, dtype=torch.float32),
+        dones=torch.tensor(dones_group, dtype=torch.bool),
     )
 
 
-# 让 lint 闭嘴: 未使用的 import (skeleton 占位, 完整实现会用到)
-_ = (Tensor, make_dist_from_logits, select_action_logits, state_to_tensors)
+# 让 lint 闭嘴 (Tensor 被 _collect_group_rollout 用)
+_ = Tensor

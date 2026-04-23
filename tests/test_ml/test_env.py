@@ -145,3 +145,59 @@ def test_env_done_at_end() -> None:
         n_steps += 1
     assert done
     assert n_steps <= 5  # 30 天 / K=5 ≈ 4 步即结束
+
+
+def test_peek_reward_does_not_mutate_state() -> None:
+    """GRPO 专用 peek_reward — 调 N 次后 env.t / prev_weights 不变 = step() 结果不受污染."""
+    cube = _synthetic_cube(n_days=60, n_industries=3)
+    mcfg = ModelConfig(phase=1, n_industries=3, seq_len=10, n_features=22)
+    env = MarketEnv(cube, PPOConfig(reward_horizon=5, turnover_penalty=0.01), mcfg)
+    env.reset(start_idx=10)
+
+    t_before = env.t
+    prev_before = env.prev_weights  # None (reset 后)
+
+    # Peek 5 次 (各种 weights), 不应 mutate
+    for w_val in [[1.0, 0, 0], [0, 1.0, 0], [0.5, 0.3, 0.2], [0.33, 0.33, 0.34], [0.1, 0.6, 0.3]]:
+        w = np.array(w_val, dtype=np.float32)
+        _ = env.peek_reward(w)
+
+    assert env.t == t_before, "peek 不应改 env.t"
+    assert env.prev_weights is prev_before, "peek 不应改 env.prev_weights"
+
+
+def test_peek_reward_equals_step_reward() -> None:
+    """peek_reward(w) 应该和 step(w) 返回的 reward 数值一致 (同 state 同 action)."""
+    cube = _synthetic_cube(n_days=60, n_industries=3)
+    mcfg = ModelConfig(phase=1, n_industries=3, seq_len=10, n_features=22)
+    env = MarketEnv(cube, PPOConfig(reward_horizon=5, turnover_penalty=0.01), mcfg)
+    env.reset(start_idx=15)
+
+    weights = np.array([0.4, 0.3, 0.3], dtype=np.float32)
+    peeked = env.peek_reward(weights)
+    stepped, _, _ = env.step(weights)
+    assert peeked == pytest.approx(stepped, abs=1e-9)
+
+
+def test_peek_reward_respects_prev_weights() -> None:
+    """peek_reward 应该带 turnover 罚 (基于 env.prev_weights)."""
+    cube = _synthetic_cube(n_days=60, n_industries=3)
+    mcfg = ModelConfig(phase=1, n_industries=3, seq_len=10, n_features=22)
+    env = MarketEnv(cube, PPOConfig(reward_horizon=5, turnover_penalty=0.01), mcfg)
+    env.reset(start_idx=15)
+
+    # 先 step 一次, prev_weights 被设置
+    env.step(np.array([1.0, 0.0, 0.0], dtype=np.float32))
+
+    # peek 完全不同的 weights → 应产生 turnover 罚
+    new_w = np.array([0.0, 1.0, 0.0], dtype=np.float32)
+    peeked = env.peek_reward(new_w)
+
+    # 手算: alpha - turnover
+    K = 5
+    K_ret = env.log_returns[env.t : env.t + K].sum(axis=0)
+    mkt = float(env.market_returns[env.t : env.t + K].sum())
+    alpha = float((new_w * (K_ret - mkt)).sum())
+    turnover = float(np.abs(new_w - np.array([1.0, 0.0, 0.0])).sum())  # = 2.0
+    expected = alpha - 0.01 * turnover
+    assert peeked == pytest.approx(expected, abs=1e-5)

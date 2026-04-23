@@ -98,28 +98,52 @@ class MarketEnv:
             mask=self.cube.traded[self.t].copy(),
         )
 
-    def step(self, weights: np.ndarray) -> tuple[float, EnvState | None, bool]:
-        """应用 action (weights), 跳 K 天, 返回 (reward, next_state, done)。
+    def _compute_reward(
+        self,
+        weights: np.ndarray,
+        t: int,
+        prev_weights: np.ndarray | None,
+    ) -> float:
+        """纯函数: 给定 (weights, t, prev_weights) 算 reward, 不改 state.
 
-        weights: (n_tokens,) 行权重, sum=1, masked 位置应为 0
+        抽出来让 step() 和 peek_reward() 共用 — GRPO group rollout 要对同一 state
+        采 G 个 action 拿 G 个 reward, 必须能 peek 而不 mutate self.t / prev_weights.
         """
         K = self.cfg.reward_horizon
-        K_ret = self.log_returns[self.t : self.t + K].sum(axis=0)  # (n_tokens,)
-        mkt_K_ret = float(self.market_returns[self.t : self.t + K].sum())
+        K_ret = self.log_returns[t : t + K].sum(axis=0)  # (n_tokens,)
+        mkt_K_ret = float(self.market_returns[t : t + K].sum())
 
         if self.mcfg.phase == 1:
             reward = self._reward_phase1(weights, K_ret, mkt_K_ret)
         else:
             reward = self._reward_phase2(weights, K_ret, mkt_K_ret)
 
-        # 换手罚
-        if self.prev_weights is not None:
-            turnover = float(np.abs(weights - self.prev_weights).sum())
+        if prev_weights is not None:
+            turnover = float(np.abs(weights - prev_weights).sum())
             reward -= self.cfg.turnover_penalty * turnover
+        return reward
 
+    def peek_reward(self, weights: np.ndarray) -> float:
+        """GRPO 专用: 同 state 试多 action 拿 reward, 不改 self.t / prev_weights.
+
+        典型用法:
+            state = env.reset()
+            for g in range(G):
+                w_g = sample_action(policy(state))
+                r_g = env.peek_reward(w_g)   # 不 advance
+            # 最后再 env.step(选一个 action) 真正推进
+        """
+        return self._compute_reward(weights, self.t, self.prev_weights)
+
+    def step(self, weights: np.ndarray) -> tuple[float, EnvState | None, bool]:
+        """应用 action (weights), 跳 K 天, 返回 (reward, next_state, done)。
+
+        weights: (n_tokens,) 行权重, sum=1, masked 位置应为 0
+        """
+        reward = self._compute_reward(weights, self.t, self.prev_weights)
         self.prev_weights = weights.copy()
-        self.t += K
-        done = self.t + K >= self.cube.n_days
+        self.t += self.cfg.reward_horizon
+        done = self.t + self.cfg.reward_horizon >= self.cube.n_days
         next_s = None if done else self._state()
         return reward, next_s, done
 
