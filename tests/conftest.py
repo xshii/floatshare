@@ -27,10 +27,12 @@ def silence_loguru():
 
 
 @pytest.fixture(autouse=True)
-def reset_apprise_cache():
-    """每个测试前重置 apprise 单例，避免环境变量串味。"""
+def reset_apprise_cache(monkeypatch):
+    """每个测试前重置 apprise 单例 + 清 notify URL — 避免测试意外推 Bark."""
     from floatshare.observability.alert import _client
 
+    # 清 env 防止 notify 真推到用户 Bark (pipeline runner / preflight / healthcheck 都会调)
+    monkeypatch.delenv("FLOATSHARE_NOTIFY_URLS", raising=False)
     _client.cache_clear()
     yield
     _client.cache_clear()
@@ -119,10 +121,6 @@ class FakeDataSource:
     def get_index_daily(self, code, start=None, end=None) -> pd.DataFrame:
         self._record("get_index_daily")
         return self.daily_df.copy()
-
-    def get_financial(self, code, report_type=None) -> pd.DataFrame:
-        self._record("get_financial")
-        return pd.DataFrame({"code": [code], "eps": [1.5]})
 
     def get_trade_calendar(self, start=None, end=None) -> list[date]:
         self._record("get_trade_calendar")

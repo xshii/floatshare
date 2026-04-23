@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import backtrader as bt
 
-from floatshare.strategy import register
+from floatshare import register
 
 
 @register("dual_thrust")
@@ -20,6 +20,16 @@ class DualThrustStrategy(bt.Strategy):
         ("k2", 0.5),
         ("position_pct", 0.8),
     )
+
+    @classmethod
+    def search_space(cls, trial):  # type: ignore[no-untyped-def]
+        """optuna 搜索空间 (供 walk_forward_optimize 用)。"""
+        return {
+            "lookback": trial.suggest_int("lookback", 2, 20),
+            "k1": trial.suggest_float("k1", 0.1, 1.0),
+            "k2": trial.suggest_float("k2", 0.1, 1.0),
+            "position_pct": trial.suggest_float("position_pct", 0.3, 1.0),
+        }
 
     def __init__(self) -> None:
         self.hh = {

@@ -24,7 +24,8 @@ class CacheManager:
 
     @staticmethod
     def _key(raw: str) -> str:
-        return hashlib.md5(raw.encode()).hexdigest()
+        # 仅作缓存文件名哈希, 非安全用途 — usedforsecurity=False 显式标记
+        return hashlib.md5(raw.encode(), usedforsecurity=False).hexdigest()
 
     def _path(self, key: str) -> Path:
         return self.cache_dir / f"{key}.pkl"

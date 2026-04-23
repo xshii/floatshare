@@ -42,6 +42,7 @@ class BacktestResult:
     returns: pd.Series
     daily_data: pd.DataFrame
     metrics: Metrics
+    trades: pd.DataFrame = field(default_factory=pd.DataFrame)  # date/code/action/price/size
     cerebro: bt.Cerebro | None = field(default=None, repr=False)
 
     @property
@@ -123,12 +124,15 @@ def run_backtest(
         _name="timereturn",
         timeframe=bt.TimeFrame.Days,
     )
+    cerebro.addanalyzer(bt.analyzers.Transactions, _name="txn")  # pyright: ignore[reportAttributeAccessIssue]
 
     results = cerebro.run()
     strat = results[0]
     # backtrader 在 strategy 实例上动态挂 .analyzers，stub 没法静态描述
     analyzer = strat.analyzers.timereturn  # pyright: ignore[reportAttributeAccessIssue]
     timereturn: dict[Any, float] = analyzer.get_analysis()
+    txn_analyzer = strat.analyzers.txn  # pyright: ignore[reportAttributeAccessIssue]
+    trades = _extract_trades(txn_analyzer.get_analysis())
     if timereturn:
         returns = pd.Series(timereturn).sort_index()
         returns.index = pd.to_datetime(returns.index)
@@ -148,9 +152,7 @@ def run_backtest(
     snapshot = metrics(returns) if len(returns) > 1 else _empty_metrics()
     if len(returns) > 1:
         # quantstats 在某些指标上不会带 total_return，用真实终值覆盖
-        snapshot = replace(
-            snapshot, total_return=(final_value - initial_capital) / initial_capital
-        )
+        snapshot = replace(snapshot, total_return=(final_value - initial_capital) / initial_capital)
 
     return BacktestResult(
         initial_capital=initial_capital,
@@ -158,8 +160,32 @@ def run_backtest(
         returns=returns,
         daily_data=daily_data,
         metrics=snapshot,
+        trades=trades,
         cerebro=cerebro,
     )
+
+
+_TRADE_COLUMNS = ("date", "code", "action", "size", "price", "value")
+
+
+def _extract_trades(txn_raw: dict[Any, list[Any]]) -> pd.DataFrame:
+    """backtrader Transactions analyzer 返回 {datetime: [(size, price, sid, symbol, value), ...]}
+    展平为 DataFrame: date / code / action / size / price / value。
+    """
+    rows: list[dict[str, Any]] = []
+    for dt, entries in txn_raw.items():
+        for size, price, _sid, symbol, value in entries:
+            rows.append(
+                {
+                    "date": pd.Timestamp(dt),
+                    "code": str(symbol),
+                    "action": "buy" if size > 0 else "sell",
+                    "size": abs(float(size)),
+                    "price": float(price),
+                    "value": float(value),
+                }
+            )
+    return pd.DataFrame(rows) if rows else pd.DataFrame(columns=list(_TRADE_COLUMNS))
 
 
 def _empty_metrics() -> Metrics:

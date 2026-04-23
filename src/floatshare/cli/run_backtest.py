@@ -9,7 +9,7 @@ import pandas as pd
 
 from floatshare.application import create_default_loader, run_backtest
 from floatshare.observability import logger
-from floatshare.strategy import discover, get, list_strategies
+from floatshare.registry import discover, get, list_strategies
 
 
 def _parse_params(items: list[str] | None) -> dict[str, object]:

@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+# 防止 secrets 意外入库的 pre-commit hook
+# 安装：git config core.hooksPath .githooks
+
+set -euo pipefail
+
+# 1. 拦截 .env 文件
+if git diff --cached --name-only | grep -qE '^\.(env|env\..*)$' | grep -v '.env.example'; then
+    echo "❌ BLOCKED: .env 文件不允许提交"
+    echo "   如果是 .env.example 模板，请确认不含真实值"
+    exit 1
+fi
+
+# 2. 扫描暂存区中是否含 token/secret 模式
+PATTERNS=(
+    'TUSHARE_TOKEN\s*=\s*["\x27]?[A-Za-z0-9]{20,}'   # tushare token (20+ chars)
+    'sk-[A-Za-z0-9]{20,}'                               # openai 风格 key
+    'ghp_[A-Za-z0-9]{36}'                                # github personal token
+    'password\s*=\s*["\x27][^\s]{8,}'                    # 疑似硬编码密码
+)
+
+STAGED_DIFF=$(git diff --cached --diff-filter=ACMR -U0 -- '*.py' '*.toml' '*.yaml' '*.yml' '*.json' '*.cfg' '*.ini')
+
+for pattern in "${PATTERNS[@]}"; do
+    if echo "$STAGED_DIFF" | grep -qiP "$pattern" 2>/dev/null; then
+        echo "❌ BLOCKED: 暂存区检测到疑似 secret"
+        echo "   匹配模式: $pattern"
+        echo "   请检查是否误提交了 token/密码"
+        echo "   如果是误报，用 git commit --no-verify 跳过（不推荐）"
+        exit 1
+    fi
+done
+
+echo "✅ pre-commit secret scan passed"
+
+# 3. Staged .py 文件 ruff check + format --check
+#    只扫 staged, 不跨全仓, 保持 commit 快 (<1s 通常)
+STAGED_PY=$(git diff --cached --name-only --diff-filter=ACMR | grep '\.py$' || true)
+if [ -n "$STAGED_PY" ]; then
+    RUFF=".venv/bin/ruff"
+    if [ -x "$RUFF" ]; then
+        N_FILES=$(echo "$STAGED_PY" | wc -l | tr -d ' ')
+        if ! echo "$STAGED_PY" | xargs "$RUFF" check --quiet; then
+            echo "❌ BLOCKED: ruff check 有错"
+            echo "   修复: .venv/bin/ruff check --fix <file>"
+            exit 1
+        fi
+        if ! echo "$STAGED_PY" | xargs "$RUFF" format --check --quiet; then
+            echo "❌ BLOCKED: ruff format 未应用"
+            echo "   修复: .venv/bin/ruff format <file>"
+            exit 1
+        fi
+        echo "✅ ruff check + format 通过 (${N_FILES} files)"
+    else
+        echo "⚠️  .venv/bin/ruff 未找到, 跳过 Python lint"
+        echo "   请确认 venv 已建: python -m venv .venv && pip install -e '.[dev]'"
+    fi
+fi

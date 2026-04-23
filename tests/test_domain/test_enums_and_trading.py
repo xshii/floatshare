@@ -2,7 +2,13 @@
 
 from __future__ import annotations
 
-from floatshare.domain import AdjustType, Direction, TradingConfig
+from floatshare.domain import (
+    AdjustType,
+    DataKind,
+    DataSourceKind,
+    Direction,
+    TradingConfig,
+)
 
 
 class TestEnums:
@@ -12,6 +18,57 @@ class TestEnums:
 
     def test_direction_compare(self):
         assert Direction.BUY != Direction.SELL
+
+
+class TestDataKindNested:
+    def test_nested_access(self):
+        assert DataKind.DAILY.RAW_DAILY == "raw_daily"
+        assert DataKind.FUNDAMENTAL.INCOME == "income"
+        assert DataKind.REFERENCE.LIFECYCLE == "lifecycle"
+
+    def test_iter_per_group(self):
+        daily = list(DataKind.DAILY)
+        assert DataKind.DAILY.RAW_DAILY in daily
+        assert DataKind.DAILY.ADJ_FACTOR in daily
+        assert DataKind.DAILY.CHIP_PERF in daily
+
+    def test_all_returns_every_kind(self):
+        all_kinds = DataKind.all()
+        # 4 reference + 6 daily + 1 intraday_heavy + 6 fundamental + 6 market + 4 event = 27
+        assert len(all_kinds) == 27
+        assert DataKind.MARKET.INDEX_DAILY in all_kinds
+        # 各分类代表都在
+        assert DataKind.REFERENCE.LIFECYCLE in all_kinds
+        assert DataKind.REFERENCE.INDEX_WEIGHT in all_kinds
+        assert DataKind.DAILY.DAILY_BASIC in all_kinds
+        assert DataKind.DAILY.MARGIN_DETAIL in all_kinds
+        assert DataKind.FUNDAMENTAL.FINA_INDICATOR in all_kinds
+        assert DataKind.FUNDAMENTAL.HOLDER_NUMBER in all_kinds
+        assert DataKind.MARKET.MONEYFLOW_HSGT in all_kinds
+        assert DataKind.MARKET.CN_CPI in all_kinds
+        assert DataKind.MARKET.CN_PPI in all_kinds
+        assert DataKind.MARKET.SHIBOR in all_kinds
+        assert DataKind.MARKET.FX_DAILY in all_kinds
+        assert DataKind.EVENT.BROKER_PICKS in all_kinds
+        assert DataKind.EVENT.DIVIDEND in all_kinds
+        assert DataKind.EVENT.TOP_LIST in all_kinds
+        assert DataKind.EVENT.TOP_INST in all_kinds
+
+    def test_from_value_roundtrip(self):
+        assert DataKind.from_value("raw_daily") == DataKind.DAILY.RAW_DAILY
+        assert DataKind.from_value("income") == DataKind.FUNDAMENTAL.INCOME
+
+
+class TestDataSourceKindNested:
+    def test_nested_access(self):
+        assert DataSourceKind.PAID_REMOTE.TUSHARE == "tushare"
+        assert DataSourceKind.FREE_REMOTE.AKSHARE == "akshare"
+
+    def test_all_returns_5_sources(self):
+        assert len(DataSourceKind.all()) == 5
+
+    def test_from_value_roundtrip(self):
+        assert DataSourceKind.from_value("tushare") == DataSourceKind.PAID_REMOTE.TUSHARE
 
 
 class TestTradingConfig:

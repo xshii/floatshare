@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import backtrader as bt
 
-from floatshare.strategy import register
+from floatshare import register
 
 
 @register("ma_cross")
@@ -19,6 +19,17 @@ class MACrossStrategy(bt.Strategy):
         ("long_period", 20),
         ("position_pct", 0.9),
     )
+
+    @classmethod
+    def search_space(cls, trial):  # type: ignore[no-untyped-def]
+        """optuna 搜索空间; long_period 必须 > short_period 由策略代码保证。"""
+        short = trial.suggest_int("short_period", 3, 20)
+        long_ = trial.suggest_int("long_period", short + 5, 100)
+        return {
+            "short_period": short,
+            "long_period": long_,
+            "position_pct": trial.suggest_float("position_pct", 0.3, 1.0),
+        }
 
     def __init__(self) -> None:
         self.ma_short = {

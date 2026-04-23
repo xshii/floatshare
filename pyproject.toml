@@ -21,42 +21,56 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
 ]
 dependencies = [
     # 数据处理
-    "pandas>=2.0.0",
-    "numpy>=1.24.0",
-    "sqlalchemy>=2.0.0",
+    "pandas>=2.2,<4",
+    "numpy>=2.0,<3",
+    "sqlalchemy>=2.0,<3",
     # 数据源
-    "akshare>=1.10.0",
+    "akshare>=1.15,<2",
     # 回测引擎
     "backtrader>=1.9.78",
     # 技术因子
-    "ta>=0.11.0",
+    "ta>=0.11",
     # 绩效分析
-    "quantstats>=0.0.62",
+    "quantstats>=0.0.80",
     # 日志/告警
-    "loguru>=0.7.0",
-    "apprise>=1.7.0",
+    "loguru>=0.7",
+    "apprise>=1.9",
     # 配置/环境
-    "pydantic>=2.0",
+    "pydantic>=2.10,<3",
     "python-dotenv>=1.0",
+    # HTTP 客户端 (token 刷新等)
+    "requests>=2.31",
 ]
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=7.0.0",
-    "pytest-cov>=4.0.0",
-    "ruff>=0.5.0",
-    "mypy>=1.10.0",
+    "pytest>=8,<10",
+    "pytest-cov>=5",
+    "ruff>=0.10",
+    "mypy>=1.15",
     "pyright>=1.1.400",
     "import-linter>=2.0",
+    "types-requests>=2.31",
 ]
 tushare = [
-    "tushare>=1.2.0",
+    "tushare>=1.4",
+]
+tune = [
+    "optuna>=3.6",
+]
+ml = [
+    "torch>=2.4",
+]
+web = [
+    "dash>=2.16",
+    "dash-bootstrap-components>=1.5",
 ]
 all = [
-    "floatshare[dev,tushare]",
+    "floatshare[dev,tushare,web,tune,ml]",
 ]
 
 [project.urls]
@@ -66,6 +80,13 @@ Repository = "https://github.com/floatshare/floatshare"
 
 [project.scripts]
 floatshare-backtest = "floatshare.cli.run_backtest:main"
+floatshare-sync = "floatshare.cli.run_sync:main"
+floatshare-healthcheck = "floatshare.cli.healthcheck:main"
+floatshare-pipeline = "floatshare.cli.run_pipeline:main"
+floatshare-web = "floatshare.web.app:main"
+floatshare-train-ppo = "floatshare.ml.train:main"
+floatshare-eval-ppo = "floatshare.cli.run_eval_ppo:main"
+floatshare-train-pop = "floatshare.ml.train_pop:main"
 
 # --- src layout ----------------------------------------------------------------
 [tool.setuptools.packages.find]
@@ -78,11 +99,35 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
-addopts = "-v --tb=short --strict-markers"
+addopts = "-v --tb=short --strict-markers --cov=floatshare --cov-report=term-missing:skip-covered --no-cov-on-fail"
 pythonpath = ["src", "."]
+markers = [
+    "slow: 端到端 / 长跑测试 (默认跑, -m 'not slow' 可跳过)",
+]
 filterwarnings = [
     "ignore::DeprecationWarning",
     "ignore::PendingDeprecationWarning",
+]
+
+# --- coverage -----------------------------------------------------------------
+[tool.coverage.run]
+branch = true
+source = ["floatshare"]
+omit = [
+    "*/tests/*",
+    "*/__main__.py",
+    "src/floatshare/web/*",              # Dash 看板 UI 目前无单测, 豁免防扭曲
+]
+
+[tool.coverage.report]
+skip_empty = true
+precision = 1
+exclude_lines = [
+    "pragma: no cover",
+    "raise NotImplementedError",
+    "if TYPE_CHECKING:",
+    "^\\s*\\.\\.\\.\\s*$",               # Protocol/ABC 的 ... 占位
+    "^\\s*pass\\s*$",                     # cache 失败兜底 pass
 ]
 
 # --- ruff ----------------------------------------------------------------------
@@ -109,6 +154,7 @@ select = [
     "PL",         # pylint subset
     "RET",        # return statements
     "PERF",       # perf anti-patterns
+    "S",          # bandit subset — 安全扫描 (SQL 注入 / 弱 hash / pickle / subprocess)
 ]
 ignore = [
     "E501",    # line length handled formatter
@@ -128,11 +174,20 @@ ignore = [
     "PLC0207", # split maxsplit 优化噪音
     "ARG002",  # Protocol 实现方法允许 unused arg
     "PT004",   # fixture name underscore 不是问题
+    # --- S (bandit) 豁免 — 都是项目约束引入的已知误报 -------------------------
+    "S603",    # subprocess.run(list) 无 shell 本项目安全模式
+    "S607",    # 走 venv PATH, 不强制绝对路径
+    "S608",    # f-string SQL: 表/列名均从白名单常量派生 (db_integrity/loader 等)
+    "S104",    # web Dash 故意 bind 0.0.0.0 (局域网)
+    "S101",    # assert 作 Pyright 类型窄化 / ML 运行时不变量 — 我们不跑 python -O
+    "S110",    # try/except/pass — 数据源/缓存/分析指标的降级兜底是合法模式
 ]
 
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"]
-"tests/**" = ["ARG", "PLR2004", "S101"]
+"src/floatshare/__init__.py" = ["F401", "E402"]  # E402: load_dotenv() 必须在 imports 之前
+"tests/**" = ["ARG", "PLR2004", "S101", "S105", "S106", "S108"]  # 测试 fixture token / /tmp
+"src/floatshare/infrastructure/storage/cache.py" = ["S301", "S110"]  # 自有数据 pickle + 缓存失败静默兜底
 
 [tool.ruff.lint.isort]
 known-first-party = ["floatshare", "strategies"]
@@ -193,56 +248,62 @@ strictSetInference = true
 root_package = "floatshare"
 
 [[tool.importlinter.contracts]]
-name = "Layered architecture: cli → application → infrastructure → strategy/risk/analytics → interfaces/observability → domain"
+name = "Layered architecture (DDD 六边形): cli/web → application/ml → infrastructure → factors/registry/analytics → interfaces/observability → domain"
 type = "layers"
 layers = [
-    "floatshare.cli",
-    "floatshare.application",
+    "floatshare.cli | floatshare.web",
+    "floatshare.application | floatshare.ml",
     "floatshare.infrastructure",
-    "floatshare.strategy | floatshare.risk | floatshare.analytics",
+    "floatshare.factors | floatshare.registry | floatshare.analytics",
     "floatshare.interfaces | floatshare.observability",
     "floatshare.domain",
 ]
 
 [[tool.importlinter.contracts]]
-name = "Domain 不依赖任何 floatshare 子模块"
+name = "Domain 是纯领域核心，不依赖任何 floatshare 子模块"
 type = "forbidden"
 source_modules = ["floatshare.domain"]
 forbidden_modules = [
     "floatshare.application",
+    "floatshare.ml",
     "floatshare.infrastructure",
     "floatshare.interfaces",
     "floatshare.observability",
-    "floatshare.strategy",
-    "floatshare.risk",
+    "floatshare.factors",
+    "floatshare.registry",
     "floatshare.analytics",
     "floatshare.cli",
+    "floatshare.web",
 ]
 
 [[tool.importlinter.contracts]]
-name = "Interfaces 只能依赖 domain"
+name = "Interfaces (端口) 只能依赖 domain"
 type = "forbidden"
 source_modules = ["floatshare.interfaces"]
 forbidden_modules = [
     "floatshare.application",
+    "floatshare.ml",
     "floatshare.infrastructure",
     "floatshare.observability",
-    "floatshare.strategy",
-    "floatshare.risk",
+    "floatshare.factors",
+    "floatshare.registry",
     "floatshare.analytics",
     "floatshare.cli",
+    "floatshare.web",
 ]
 
 [[tool.importlinter.contracts]]
-name = "Strategy/Risk/Analytics 不依赖 infrastructure 与 application"
+name = "Factors/Registry/Analytics 不依赖 infrastructure 与 application/ml (它们是工具/领域服务)"
 type = "forbidden"
 source_modules = [
-    "floatshare.strategy",
-    "floatshare.risk",
+    "floatshare.factors",
+    "floatshare.registry",
     "floatshare.analytics",
 ]
 forbidden_modules = [
     "floatshare.infrastructure",
     "floatshare.application",
+    "floatshare.ml",
     "floatshare.cli",
+    "floatshare.web",
 ]

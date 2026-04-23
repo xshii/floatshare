@@ -7,7 +7,8 @@ from typing import TYPE_CHECKING, cast
 
 import pandas as pd
 
-from floatshare.domain.enums import AdjustType, ReportType, TimeFrame
+from floatshare.domain.enums import AdjustType, TimeFrame
+from floatshare.domain.schema import normalize_ohlcv
 from floatshare.interfaces.data_source import DataSourceError
 
 if TYPE_CHECKING:
@@ -89,7 +90,18 @@ class AKShareSource:
         )
         df["code"] = code
         df["trade_date"] = pd.to_datetime(df["trade_date"])
-        return df.sort_values("trade_date").reset_index(drop=True)
+        df = df.sort_values("trade_date").reset_index(drop=True)
+        return normalize_ohlcv(df)
+
+    # --- RawDailySource ------------------------------------------------------
+    def get_raw_daily(
+        self,
+        code: str,
+        start: date | None = None,
+        end: date | None = None,
+    ) -> pd.DataFrame:
+        """返回未复权日线（adjust=""）。"""
+        return self.get_daily(code, start, end, adj=AdjustType.NONE)
 
     # --- MinuteDataSource ----------------------------------------------------
     def get_minute(
@@ -152,19 +164,7 @@ class AKShareSource:
             df = cast(pd.DataFrame, df[df["trade_date"] >= pd.Timestamp(start)])
         if end is not None:
             df = cast(pd.DataFrame, df[df["trade_date"] <= pd.Timestamp(end)])
-        return df.reset_index(drop=True)
-
-    # --- FinancialDataSource -------------------------------------------------
-    def get_financial(
-        self,
-        code: str,
-        report_type: ReportType = ReportType.QUARTERLY,
-    ) -> pd.DataFrame:
-        ticker = _strip_market(code)
-        try:
-            return self.ak.stock_financial_analysis_indicator(symbol=ticker)
-        except Exception:  # pragma: no cover
-            return pd.DataFrame()
+        return normalize_ohlcv(df.reset_index(drop=True))
 
     # --- CalendarSource ------------------------------------------------------
     def get_trade_calendar(

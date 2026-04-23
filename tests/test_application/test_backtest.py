@@ -5,7 +5,7 @@ from __future__ import annotations
 import backtrader as bt
 
 from floatshare.application import BacktestResult, run_backtest
-from floatshare.strategy import discover, get
+from floatshare.registry import discover, get
 
 
 class BuyAndHoldStrategy(bt.Strategy):
@@ -62,7 +62,7 @@ class TestBacktestRunner:
 
 class TestRegisteredStrategies:
     def test_discover_loads_all_strategies(self):
-        from floatshare.strategy import clear, list_strategies
+        from floatshare.registry import clear, list_strategies
 
         clear()
         loaded = discover("strategies")

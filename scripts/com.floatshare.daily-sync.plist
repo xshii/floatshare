@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- 反向域名格式的唯一 label -->
+  <key>Label</key>
+  <string>com.floatshare.daily-sync</string>
+
+  <!-- 触发命令: bash 脚本 (确保 PATH 完整) -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/gakki/dev/floatshare/scripts/daily-sync.sh</string>
+  </array>
+
+  <!-- 调度: 每天 20:00 北京时间 (cctv_news ~20:00 发布, 全流程 ~2 min 完成) -->
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>20</integer>
+    <key>Minute</key>
+    <integer>0</integer>
+  </dict>
+
+  <!-- 错过补跑: 电脑睡眠/关机错过的任务，开机后立即补 -->
+  <key>RunAtLoad</key>
+  <false/>
+
+  <!-- 工作目录 -->
+  <key>WorkingDirectory</key>
+  <string>/Users/gakki/dev/floatshare</string>
+
+  <!-- 日志: stdout/stderr 落到 logs/launchd-*.log -->
+  <key>StandardOutPath</key>
+  <string>/Users/gakki/dev/floatshare/logs/launchd-daily-sync.out</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/gakki/dev/floatshare/logs/launchd-daily-sync.err</string>
+
+  <!-- 防止僵尸进程: 任务结束后立即释放资源 -->
+  <key>ProcessType</key>
+  <string>Background</string>
+</dict>
+</plist>

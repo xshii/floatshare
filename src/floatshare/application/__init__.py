@@ -10,11 +10,27 @@ from floatshare.application.data_loader import (
     DataLoader,
     create_default_loader,
 )
+from floatshare.application.data_syncer import DataSyncer as DataSyncer
+from floatshare.application.data_syncer import apply_adjustment as apply_adjustment
+from floatshare.application.treasury import (
+    AccountNotFound,
+    InsufficientFunds,
+    PlanNotActive,
+    PlanNotFound,
+    Treasury,
+)
 
 __all__ = [
+    "AccountNotFound",
     "AllSourcesFailed",
     "BacktestResult",
     "DataLoader",
+    "DataSyncer",
+    "InsufficientFunds",
+    "PlanNotActive",
+    "PlanNotFound",
+    "Treasury",
+    "apply_adjustment",
     "create_default_loader",
     "run_backtest",
 ]

@@ -9,14 +9,21 @@ dist/
 build/
 .Python
 
+# Secrets — 绝对不能入库
+.env
+.env.*
+!.env.example
+
 # Virtual environment
 .venv/
 venv/
 ENV/
 env/
 
-# IDE
-.vscode/
+# IDE — 个人配置 ignore，团队共享配置例外
+.vscode/*
+!.vscode/launch.json
+!.vscode/extensions.json
 .idea/
 *.swp
 *.swo
@@ -43,3 +50,16 @@ logs/
 tmp/
 temp/
 *.tmp
+
+# 运行时数据 — SQLite db / 缓存 / 历史快照
+# 注意：Tushare token cache 在 ~/.floatshare/tushare_token (home 目录之外，git 摸不到)
+data/*
+# 例外: NLP 词典 + baseline 属于可版本化配置 (非运行时生成数据)
+!data/news/
+data/news/*
+!data/news/*.json
+
+# notebooks/ 的中间 CSV / JSON 产物 (保留 .py / .md 源代码)
+notebooks/output/
+# 防止 home 目录的 .floatshare/ 被软链/复制到 repo 根
+.floatshare/

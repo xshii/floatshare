@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 import pandas as pd
 
 from floatshare.domain.enums import AdjustType
+from floatshare.domain.schema import normalize_ohlcv
 from floatshare.interfaces.data_source import DataSourceError
 
 if TYPE_CHECKING:
@@ -83,4 +84,5 @@ class EastMoneySource:
         )
         df["code"] = code
         df["trade_date"] = pd.to_datetime(df["trade_date"])
-        return df.sort_values("trade_date").reset_index(drop=True)
+        df = df.sort_values("trade_date").reset_index(drop=True)
+        return normalize_ohlcv(df)

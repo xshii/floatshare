@@ -7,7 +7,7 @@ from typing import Protocol, runtime_checkable
 
 import pandas as pd
 
-from floatshare.domain.enums import AdjustType, ReportType, TimeFrame
+from floatshare.domain.enums import AdjustType, TimeFrame
 
 
 class DataSourceError(RuntimeError):
@@ -25,7 +25,10 @@ class DailyDataSource(Protocol):
         end: date | None = None,
         adj: AdjustType = AdjustType.QFQ,
     ) -> pd.DataFrame:
-        """返回包含 trade_date/open/high/low/close/volume 列的 DataFrame。"""
+        """返回符合 `domain.schema.OHLCV_REQUIRED + OHLCV_OPTIONAL` 的 DataFrame。
+
+        实现方应在 return 前调用 `normalize_ohlcv()` 保证降级链 schema 一致。
+        """
         ...
 
 
@@ -55,17 +58,6 @@ class IndexDataSource(Protocol):
 
 
 @runtime_checkable
-class FinancialDataSource(Protocol):
-    """提供财务数据。"""
-
-    def get_financial(
-        self,
-        code: str,
-        report_type: ReportType = ReportType.QUARTERLY,
-    ) -> pd.DataFrame: ...
-
-
-@runtime_checkable
 class CalendarSource(Protocol):
     """提供交易日历。"""
 
@@ -81,3 +73,31 @@ class StockListSource(Protocol):
     """提供股票列表。"""
 
     def get_stock_list(self) -> pd.DataFrame: ...
+
+
+@runtime_checkable
+class AdjFactorSource(Protocol):
+    """提供复权因子。"""
+
+    def get_adj_factor(
+        self,
+        code: str,
+        start: date | None = None,
+        end: date | None = None,
+    ) -> pd.DataFrame:
+        """返回包含 trade_date, adj_factor 列的 DataFrame。"""
+        ...
+
+
+@runtime_checkable
+class RawDailySource(Protocol):
+    """提供原始未复权日线 — 与 DailyDataSource 区分，永远返回不复权数据。"""
+
+    def get_raw_daily(
+        self,
+        code: str,
+        start: date | None = None,
+        end: date | None = None,
+    ) -> pd.DataFrame:
+        """返回未复权 OHLCV DataFrame。"""
+        ...

@@ -1,0 +1,233 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Healthcheck · 全部源",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "floatshare.cli.healthcheck",
+            "args": [],
+            "envFile": "${workspaceFolder}/.env",
+            "console": "integratedTerminal",
+            "justMyCode": false
+        },
+        {
+            "name": "Healthcheck · Tushare (付费)",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "floatshare.cli.healthcheck",
+            "args": ["--source", "tushare"],
+            "envFile": "${workspaceFolder}/.env",
+            "console": "integratedTerminal",
+            "justMyCode": false
+        },
+        {
+            "name": "Healthcheck · AKShare (免费)",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "floatshare.cli.healthcheck",
+            "args": ["--source", "akshare"],
+            "envFile": "${workspaceFolder}/.env",
+            "console": "integratedTerminal",
+            "justMyCode": false
+        },
+        {
+            "name": "Healthcheck · EastMoney (免费)",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "floatshare.cli.healthcheck",
+            "args": ["--source", "eastmoney"],
+            "envFile": "${workspaceFolder}/.env",
+            "console": "integratedTerminal",
+            "justMyCode": false
+        },
+        {
+            "name": "Healthcheck · LocalDb",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "floatshare.cli.healthcheck",
+            "args": ["--source", "localdb"],
+            "envFile": "${workspaceFolder}/.env",
+            "console": "integratedTerminal",
+            "justMyCode": false
+        },
+        {
+            "name": "Healthcheck · Cached",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "floatshare.cli.healthcheck",
+            "args": ["--source", "cached"],
+            "envFile": "${workspaceFolder}/.env",
+            "console": "integratedTerminal",
+            "justMyCode": false
+        },
+        {
+            "name": "Sync · 测试 3 只股票全数据 (2025)",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "floatshare.cli.run_sync",
+            "args": [
+                "--codes", "600000.SH", "000001.SZ", "600519.SH",
+                "--start", "2025-01-01",
+                "--end", "2025-12-31"
+            ],
+            "envFile": "${workspaceFolder}/.env",
+            "console": "integratedTerminal",
+            "justMyCode": false
+        },
+        {
+            "name": "Sync · 全 A 股 limit 100 (近 3 年)",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "floatshare.cli.run_sync",
+            "args": [
+                "--all-stocks", "--limit", "100",
+                "--include", "raw_daily", "adj_factor",
+                "--start", "2023-01-01",
+                "--end", "2025-12-31"
+            ],
+            "envFile": "${workspaceFolder}/.env",
+            "console": "integratedTerminal",
+            "justMyCode": false
+        },
+        {
+            "name": "Sync · 全 A 股 全数据 全历史（大量消耗积分）",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "floatshare.cli.run_sync",
+            "args": [
+                "--all-stocks",
+                "--start", "2015-01-01",
+                "--end", "2025-12-31"
+            ],
+            "envFile": "${workspaceFolder}/.env",
+            "console": "integratedTerminal",
+            "justMyCode": false
+        },
+        {
+            "name": "Sync · 筹码分布 + 胜率 (3 股 2025)",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "floatshare.cli.run_sync",
+            "args": [
+                "--codes", "600000.SH", "000001.SZ", "600519.SH",
+                "--include", "chip_perf", "chip_dist",
+                "--start", "2025-01-01",
+                "--end", "2025-12-31"
+            ],
+            "envFile": "${workspaceFolder}/.env",
+            "console": "integratedTerminal",
+            "justMyCode": false
+        },
+        {
+            "name": "Sync · 券商盈利预测 (3 股 近 3 年)",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "floatshare.cli.run_sync",
+            "args": [
+                "--codes", "600000.SH", "000001.SZ", "600519.SH",
+                "--include", "forecast",
+                "--start", "2023-01-01",
+                "--end", "2025-12-31"
+            ],
+            "envFile": "${workspaceFolder}/.env",
+            "console": "integratedTerminal",
+            "justMyCode": false
+        },
+        {
+            "name": "Sync · 券商金股 (2025 全年)",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "floatshare.cli.run_sync",
+            "args": [
+                "--include", "broker_picks",
+                "--months",
+                "202501", "202502", "202503", "202504", "202505", "202506",
+                "202507", "202508", "202509", "202510", "202511", "202512"
+            ],
+            "envFile": "${workspaceFolder}/.env",
+            "console": "integratedTerminal",
+            "justMyCode": false
+        },
+        {
+            "name": "Sync · 今日增量 (每日跑)",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "floatshare.cli.run_sync",
+            "args": [
+                "--all-stocks",
+                "--include", "raw_daily", "adj_factor", "chip_perf", "chip_dist",
+                "--start", "2025-12-31",
+                "--end", "2025-12-31"
+            ],
+            "envFile": "${workspaceFolder}/.env",
+            "console": "integratedTerminal",
+            "justMyCode": false
+        },
+        {
+            "name": "Sync · --force 强制重拉 (当前 codes)",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "floatshare.cli.run_sync",
+            "args": [
+                "--codes", "600000.SH",
+                "--start", "2025-01-01",
+                "--end", "2025-12-31",
+                "--force"
+            ],
+            "envFile": "${workspaceFolder}/.env",
+            "console": "integratedTerminal",
+            "justMyCode": false
+        },
+        {
+            "name": "Backtest · MA Cross (3 股 2025)",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "floatshare.cli.run_backtest",
+            "args": [
+                "--strategy", "ma_cross",
+                "--codes", "600000.SH", "000001.SZ", "600519.SH",
+                "--start", "2025-01-01",
+                "--end", "2025-12-31",
+                "--capital", "1000000"
+            ],
+            "envFile": "${workspaceFolder}/.env",
+            "console": "integratedTerminal",
+            "justMyCode": false
+        },
+        {
+            "name": "Backtest · Dual Thrust (3 股 2025)",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "floatshare.cli.run_backtest",
+            "args": [
+                "--strategy", "dual_thrust",
+                "--codes", "600000.SH", "000001.SZ", "600519.SH",
+                "--start", "2025-01-01",
+                "--end", "2025-12-31",
+                "--capital", "1000000"
+            ],
+            "envFile": "${workspaceFolder}/.env",
+            "console": "integratedTerminal",
+            "justMyCode": false
+        },
+        {
+            "name": "Pytest · 当前文件",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "pytest",
+            "args": ["${file}", "-v"],
+            "console": "integratedTerminal",
+            "justMyCode": false
+        },
+        {
+            "name": "Pytest · 全部",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "pytest",
+            "args": ["tests/", "-v"],
+            "console": "integratedTerminal",
+            "justMyCode": false
+        }
+    ]
+}
