@@ -58,6 +58,8 @@ data/*
 !data/news/
 data/news/*
 !data/news/*.json
+!data/news/baselines/
+!data/news/baselines/*.json
 
 # notebooks/ 的中间 CSV / JSON 产物 (保留 .py / .md 源代码)
 notebooks/output/

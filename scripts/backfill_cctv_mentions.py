@@ -149,9 +149,9 @@ def _process_day(
         if not dry_run:
             _upsert_raw(conn, td_str, raw_df, now)
 
-    # 重算 mentions
+    # 重算 mentions — 传 for_date 触发 PIT baseline (避免 look-ahead)
     full_text = "\n".join(str(c) for c in raw_df["content"].tolist() if c)
-    mentions = extract_industry_mentions(full_text)
+    mentions = extract_industry_mentions(full_text, for_date=td_str)
     if not dry_run:
         _upsert_mentions(conn, td_str, mentions, now)
 
@@ -186,7 +186,8 @@ def main() -> None:
     print(f"mode      : {'rebuild-only' if args.rebuild_mentions_only else 'fetch+rebuild'}")
     print(f"dry-run   : {args.dry_run}")
     print(f"keywords  : {len(load_industry_keywords().entries)} L1 词库")
-    print(f"baseline  : {len(load_industry_baseline())} L1 idf 已加载")
+    print(f"baseline  : {len(load_industry_baseline())} L1 idf (全局 fallback)")
+    print("           PIT 查 data/news/baselines/YYYY-MM.json 按月匹配 for_date")
     print()
 
     ts = None if args.rebuild_mentions_only else TushareSource()

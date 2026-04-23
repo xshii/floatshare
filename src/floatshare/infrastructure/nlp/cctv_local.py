@@ -21,7 +21,8 @@ from functools import lru_cache
 from pathlib import Path
 
 INDUSTRY_KEYWORDS_PATH = Path("data/news/industry_keywords.json")
-INDUSTRY_BASELINE_PATH = Path("data/news/industry_baseline.json")
+INDUSTRY_BASELINE_PATH = Path("data/news/industry_baseline.json")  # 全局 fallback
+INDUSTRY_BASELINE_DIR = Path("data/news/baselines")  # PIT 月度 baseline 目录
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,14 +61,10 @@ def load_industry_keywords(path: Path | None = None) -> KeywordDict:
     )
 
 
-@lru_cache(maxsize=1)
-def load_industry_baseline(path: Path | None = None) -> dict[str, float]:
-    """读 data/news/industry_baseline.json 返回 {l1_code: idf}.
-
-    文件不存在 / 损坏 → 返回空 dict, 调用方降级 (weighted_score=None).
-    由 scripts/build_news_baseline.py 生成, 推荐每月重算一次.
-    """
-    p = path or INDUSTRY_BASELINE_PATH
+@lru_cache(maxsize=128)
+def _load_baseline_file(path_str: str) -> dict[str, float]:
+    """读 baseline JSON → {l1_code: idf}. 文件缺/坏 → 空 dict. 带 lru_cache 加速回填."""
+    p = Path(path_str)
     if not p.exists():
         return {}
     try:
@@ -78,23 +75,67 @@ def load_industry_baseline(path: Path | None = None) -> dict[str, float]:
     return {l1: float(v["idf"]) for l1, v in industries.items() if "idf" in v}
 
 
+def load_industry_baseline(
+    path: Path | None = None,
+    *,
+    for_date: str | None = None,
+    baseline_dir: Path | None = None,
+) -> dict[str, float]:
+    """读行业 IDF baseline → {l1_code: idf}.
+
+    三种模式, 按优先级:
+
+    1. **显式 path** (path 非 None): 直接读该文件 (测试/手动指定).
+    2. **PIT 模式** (for_date 非 None): 查 baselines/YYYY-MM.json,
+       其中 YYYY-MM = for_date 的年月. 用于历史回填, 避免 look-ahead.
+       找不到月度文件 → 自动 fallback 到全局 baseline.
+    3. **全局模式** (两者都 None): 读 data/news/industry_baseline.json,
+       用于生产 T 日 ingest (最近 90 天 rolling).
+
+    文件不存在 / 损坏 → 返回空 dict, 调用方降级 (weighted_score=None).
+    """
+    if path is not None:
+        return _load_baseline_file(str(path))
+
+    if for_date is not None:
+        # PIT: 取 YYYY-MM
+        d = baseline_dir or INDUSTRY_BASELINE_DIR
+        month_key = for_date[:7]  # '2021-06-15' → '2021-06'
+        pit = d / f"{month_key}.json"
+        idf_map = _load_baseline_file(str(pit))
+        if idf_map:
+            return idf_map
+        # fallback: 月度文件缺 → 全局 baseline (acknowledge look-ahead)
+
+    return _load_baseline_file(str(INDUSTRY_BASELINE_PATH))
+
+
 def extract_industry_mentions(
     text: str,
     keywords: KeywordDict | None = None,
     baseline_idf: dict[str, float] | None = None,
+    *,
+    for_date: str | None = None,
 ) -> list[IndustryMention]:
     """输入新闻联播完整文字稿 → 输出被提及的行业列表.
 
     未装 jieba 退化为 substring match (对短语 / 英文缩写 如 '5G' 表现一致).
     装 jieba 后走精确分词 + 词袋匹配, 对歧义词 ('银行' vs '银河') 更准.
 
-    baseline_idf 默认从 data/news/industry_baseline.json 自动读. 文件缺 →
-    weighted_score = None; 文件在 → weighted_score = raw_score * idf.
+    baseline_idf:
+        显式传入 → 直接用;
+        None + for_date='YYYY-MM-DD' → 读 data/news/baselines/YYYY-MM.json (PIT, 避免 look-ahead);
+        None + for_date None → 读 data/news/industry_baseline.json (全局最近 90 天, 生产 T 日用).
+
+    baseline 缺 → weighted_score = None; baseline 在 → weighted_score = raw_score × idf.
     """
     kd = keywords or load_industry_keywords()
     if not text:
         return []
-    idf_map = baseline_idf if baseline_idf is not None else load_industry_baseline()
+    if baseline_idf is not None:
+        idf_map = baseline_idf
+    else:
+        idf_map = load_industry_baseline(for_date=for_date)
     tokens = _tokenize(text)
     token_set = set(tokens)
 

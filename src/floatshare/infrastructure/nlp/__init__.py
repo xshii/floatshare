@@ -5,6 +5,9 @@ keyword_config : 关键词词典的 Python API (get_keywords / lint_dictionary �
 """
 
 from floatshare.infrastructure.nlp.cctv_local import (
+    INDUSTRY_BASELINE_DIR as INDUSTRY_BASELINE_DIR,
+)
+from floatshare.infrastructure.nlp.cctv_local import (
     INDUSTRY_BASELINE_PATH as INDUSTRY_BASELINE_PATH,
 )
 from floatshare.infrastructure.nlp.cctv_local import (

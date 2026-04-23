@@ -1,0 +1,223 @@
+{
+  "_meta": {
+    "source_start": "2018-01-01",
+    "source_end": "2018-03-31",
+    "source_days_total": 90,
+    "source_days_with_data": 90,
+    "source_empty_days_count": 0,
+    "generated_at": "2026-04-22",
+    "keyword_dict_version": "loaded_from_industry_keywords.json"
+  },
+  "industries": {
+    "801010.SI": {
+      "name": "农林牧渔",
+      "days_mentioned": 71,
+      "mentions_total": 160,
+      "mentions_per_day": 1.778,
+      "idf": 1.2231
+    },
+    "801030.SI": {
+      "name": "基础化工",
+      "days_mentioned": 25,
+      "mentions_total": 32,
+      "mentions_per_day": 0.356,
+      "idf": 2.2417
+    },
+    "801040.SI": {
+      "name": "钢铁",
+      "days_mentioned": 8,
+      "mentions_total": 9,
+      "mentions_per_day": 0.1,
+      "idf": 3.3026
+    },
+    "801050.SI": {
+      "name": "有色金属",
+      "days_mentioned": 41,
+      "mentions_total": 55,
+      "mentions_per_day": 0.611,
+      "idf": 1.7621
+    },
+    "801080.SI": {
+      "name": "电子",
+      "days_mentioned": 22,
+      "mentions_total": 25,
+      "mentions_per_day": 0.278,
+      "idf": 2.3643
+    },
+    "801110.SI": {
+      "name": "家用电器",
+      "days_mentioned": 11,
+      "mentions_total": 11,
+      "mentions_per_day": 0.122,
+      "idf": 3.0149
+    },
+    "801120.SI": {
+      "name": "食品饮料",
+      "days_mentioned": 24,
+      "mentions_total": 27,
+      "mentions_per_day": 0.3,
+      "idf": 2.2809
+    },
+    "801130.SI": {
+      "name": "纺织服饰",
+      "days_mentioned": 9,
+      "mentions_total": 9,
+      "mentions_per_day": 0.1,
+      "idf": 3.1972
+    },
+    "801140.SI": {
+      "name": "轻工制造",
+      "days_mentioned": 6,
+      "mentions_total": 6,
+      "mentions_per_day": 0.067,
+      "idf": 3.5539
+    },
+    "801150.SI": {
+      "name": "医药生物",
+      "days_mentioned": 52,
+      "mentions_total": 90,
+      "mentions_per_day": 1.0,
+      "idf": 1.5295
+    },
+    "801160.SI": {
+      "name": "公用事业",
+      "days_mentioned": 34,
+      "mentions_total": 56,
+      "mentions_per_day": 0.622,
+      "idf": 1.9445
+    },
+    "801170.SI": {
+      "name": "交通运输",
+      "days_mentioned": 84,
+      "mentions_total": 285,
+      "mentions_per_day": 3.167,
+      "idf": 1.0572
+    },
+    "801180.SI": {
+      "name": "房地产",
+      "days_mentioned": 37,
+      "mentions_total": 48,
+      "mentions_per_day": 0.533,
+      "idf": 1.8622
+    },
+    "801200.SI": {
+      "name": "商贸零售",
+      "days_mentioned": 17,
+      "mentions_total": 22,
+      "mentions_per_day": 0.244,
+      "idf": 2.6094
+    },
+    "801210.SI": {
+      "name": "社会服务",
+      "days_mentioned": 80,
+      "mentions_total": 163,
+      "mentions_per_day": 1.811,
+      "idf": 1.1054
+    },
+    "801710.SI": {
+      "name": "建筑材料",
+      "days_mentioned": 8,
+      "mentions_total": 10,
+      "mentions_per_day": 0.111,
+      "idf": 3.3026
+    },
+    "801720.SI": {
+      "name": "建筑装饰",
+      "days_mentioned": 50,
+      "mentions_total": 66,
+      "mentions_per_day": 0.733,
+      "idf": 1.568
+    },
+    "801730.SI": {
+      "name": "电力设备",
+      "days_mentioned": 18,
+      "mentions_total": 25,
+      "mentions_per_day": 0.278,
+      "idf": 2.5554
+    },
+    "801740.SI": {
+      "name": "国防军工",
+      "days_mentioned": 75,
+      "mentions_total": 165,
+      "mentions_per_day": 1.833,
+      "idf": 1.1691
+    },
+    "801750.SI": {
+      "name": "计算机",
+      "days_mentioned": 39,
+      "mentions_total": 72,
+      "mentions_per_day": 0.8,
+      "idf": 1.8109
+    },
+    "801760.SI": {
+      "name": "传媒",
+      "days_mentioned": 64,
+      "mentions_total": 103,
+      "mentions_per_day": 1.144,
+      "idf": 1.3254
+    },
+    "801770.SI": {
+      "name": "通信",
+      "days_mentioned": 37,
+      "mentions_total": 50,
+      "mentions_per_day": 0.556,
+      "idf": 1.8622
+    },
+    "801780.SI": {
+      "name": "银行",
+      "days_mentioned": 34,
+      "mentions_total": 62,
+      "mentions_per_day": 0.689,
+      "idf": 1.9445
+    },
+    "801790.SI": {
+      "name": "非银金融",
+      "days_mentioned": 40,
+      "mentions_total": 58,
+      "mentions_per_day": 0.644,
+      "idf": 1.7862
+    },
+    "801880.SI": {
+      "name": "汽车",
+      "days_mentioned": 23,
+      "mentions_total": 32,
+      "mentions_per_day": 0.356,
+      "idf": 2.3218
+    },
+    "801890.SI": {
+      "name": "机械设备",
+      "days_mentioned": 36,
+      "mentions_total": 46,
+      "mentions_per_day": 0.511,
+      "idf": 1.8889
+    },
+    "801950.SI": {
+      "name": "煤炭",
+      "days_mentioned": 22,
+      "mentions_total": 26,
+      "mentions_per_day": 0.289,
+      "idf": 2.3643
+    },
+    "801960.SI": {
+      "name": "石油石化",
+      "days_mentioned": 17,
+      "mentions_total": 23,
+      "mentions_per_day": 0.256,
+      "idf": 2.6094
+    },
+    "801970.SI": {
+      "name": "环保",
+      "days_mentioned": 75,
+      "mentions_total": 161,
+      "mentions_per_day": 1.789,
+      "idf": 1.1691
+    },
+    "801980.SI": {
+      "name": "美容护理",
+      "days_mentioned": 0,
+      "mentions_total": 0,
+      "mentions_per_day": 0.0,
+      "idf": 5.4998
+    }
+  }
+}
