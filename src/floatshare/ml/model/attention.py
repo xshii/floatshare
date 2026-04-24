@@ -2,13 +2,13 @@
 
 Pre-norm (LLaMA 风格) 比 post-norm 训练稳定, 不需要 warmup。
 mask: (B, N) bool, True = 保留, False = 屏蔽 (设为 -inf logit)。
+
+Attention 计算走 `F.scaled_dot_product_attention` — MPS 上有 fused Metal kernel,
+避免物化 (B, H, N, N) 中间 scores 矩阵 (对大 N 如 stock-attn N=457 极重要).
 """
 
 from __future__ import annotations
 
-import math
-
-import torch
 from torch import Tensor, nn
 from torch.nn import functional as F
 
@@ -16,7 +16,7 @@ from floatshare.ml.model.norm import RMSNorm
 
 
 class MultiHeadAttention(nn.Module):
-    """标准 MHA, 支持 key padding mask。
+    """标准 MHA, 支持 key padding mask. 用 SDPA fused kernel.
 
     Args:
         embed_dim: token 隐藏维度 D
@@ -37,28 +37,34 @@ class MultiHeadAttention(nn.Module):
         self.n_heads = n_heads
         self.head_dim = head_dim or (embed_dim // n_heads)
         self.inner_dim = self.head_dim * n_heads
-        self.scale = 1.0 / math.sqrt(self.head_dim)
+        self.dropout_p = dropout
 
         self.q_proj = nn.Linear(embed_dim, self.inner_dim, bias=False)
         self.k_proj = nn.Linear(embed_dim, self.inner_dim, bias=False)
         self.v_proj = nn.Linear(embed_dim, self.inner_dim, bias=False)
         self.out_proj = nn.Linear(self.inner_dim, embed_dim, bias=False)
-        self.dropout = nn.Dropout(dropout)
 
     def forward(self, x: Tensor, mask: Tensor | None = None) -> Tensor:
-        """x: (B, N, D), mask: (B, N) bool (True=keep). 返回 (B, N, D)."""
+        """x: (B, N, D), mask: (B, N) bool (True=keep). 返回 (B, N, D).
+
+        SDPA 的 bool attn_mask 语义: True=可见, False=屏蔽 — 与我们的 mask 一致,
+        直接广播 (B, 1, 1, N) 即可, SDPA 内部 fused scaling + softmax + dropout.
+        """
         b, n, _ = x.shape
         q = self.q_proj(x).view(b, n, self.n_heads, self.head_dim).transpose(1, 2)
         k = self.k_proj(x).view(b, n, self.n_heads, self.head_dim).transpose(1, 2)
         v = self.v_proj(x).view(b, n, self.n_heads, self.head_dim).transpose(1, 2)
         # (B, H, N, head_dim)
-        scores = torch.matmul(q, k.transpose(-2, -1)) * self.scale  # (B, H, N, N)
-        if mask is not None:
-            # mask key positions: (B, N) → (B, 1, 1, N)
-            scores = scores.masked_fill(~mask[:, None, None, :], float("-inf"))
-        attn = F.softmax(scores, dim=-1)
-        attn = self.dropout(attn)
-        out = torch.matmul(attn, v)  # (B, H, N, head_dim)
+
+        attn_mask = mask[:, None, None, :] if mask is not None else None  # (B,1,1,N) broadcast
+        out = F.scaled_dot_product_attention(
+            q,
+            k,
+            v,
+            attn_mask=attn_mask,
+            dropout_p=self.dropout_p if self.training else 0.0,
+            is_causal=False,
+        )  # (B, H, N, head_dim)
         out = out.transpose(1, 2).contiguous().view(b, n, self.inner_dim)
         return self.out_proj(out)
 

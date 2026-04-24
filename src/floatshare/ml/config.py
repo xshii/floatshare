@@ -46,9 +46,10 @@ class ModelConfig:
     # === Sparse stock-attn (dual_axis 性能优化) ===
     # T=60 时, stock-attn 是 O(T·N²) 瓶颈; 稀疏化能省 3-5×.
     # active steps = {0, every, 2·every, ...} ∪ {T - last_dense, ..., T-1}
-    # 默认: 0/5/10/.../45 + 50..59 = 20 次, 省 3× (vs 60 次)
-    stock_attn_every: int = 5
-    stock_attn_last_dense: int = 10
+    # 默认: every=10, last_dense=5 → {0/10/20/30/40/50} ∪ {55..59} = 11 次, 省 5× (vs 60 次)
+    # (旧 default every=5,last_dense=10 = 20 次; M4+SDPA 后压力转到 MHA FLOPs, 激进稀疏化更好)
+    stock_attn_every: int = 10
+    stock_attn_last_dense: int = 5
 
     # === 阶段 ===
     # 1: 行业 pick (IndustryHead)
@@ -66,14 +67,14 @@ class DataConfig:
 
     # === 时间切分 (按时间, 不是随机) — prod-oriented, 对齐业界 WFV + warm-start 链 ===
     # Anchor 固定 2018-01-01: tushare cctv_news 数据起点, 避免 2014-2017 news 特征全 0 伪信号
-    # Train 吃到 2024-12: 学到注册制成熟期 / 量化监管 / AI 行情等最新 regime
-    # Val 紧贴 train 尾 3 个月: 选 ckpt 看"接近当下"分布
-    # Test 1 整年: 2025-04~2026-03, 覆盖一轮周期足够评估, 不过度占数据
+    # Train 吃到 2024-09: 6.75 年历史, 学到注册制成熟期 / 量化监管 / AI 行情等最新 regime
+    # Val 紧贴 train 尾 6 个月 (~120 交易日): AUC 稳定需要, 小于 seq_len=60 会崩
+    # Test 1 整年: 2025-04~2026-03, 覆盖一轮周期足够评估
     # 2026-04+ 起 S4 daily warm-start 接手 (stage_s4_train + find_best_ckpt)
     # 每季度 / 半年人工跑 scripts/walk_forward_eval.py 做 sanity check + 定期冷重训 anchor
     train_start: str = "2018-01-01"
-    train_end: str = "2024-12-31"
-    val_start: str = "2025-01-01"
+    train_end: str = "2024-09-30"
+    val_start: str = "2024-10-01"
     val_end: str = "2025-03-31"
     test_start: str = "2025-04-01"
     test_end: str = "2026-03-31"

@@ -7,7 +7,7 @@ import functools
 import os
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -46,6 +46,18 @@ class _FetchSpec:
 _RENAME_OHLCV = {"ts_code": "code", "vol": "volume"}
 _RENAME_CODE = {"ts_code": "code"}
 
+# _SPECS key 常量 — 避免 "income_bulk" 这类魔鬼字符串在 _SPECS + get_*_bulk 两处各写一遍
+_SPEC_INCOME_BULK = "income_bulk"
+_SPEC_BALANCESHEET_BULK = "balancesheet_bulk"
+_SPEC_CASHFLOW_BULK = "cashflow_bulk"
+_SPEC_FINA_INDICATOR_BULK = "fina_indicator_bulk"
+_SPEC_HOLDER_NUMBER_BULK = "holder_number_bulk"
+_SPEC_DIVIDEND_BULK = "dividend_bulk"
+
+# tushare API 方法名常量 — 同一个 API 在 per-code 和 bulk spec 被引用 2 次, 抽常量避免漂移
+_API_HOLDER_NUMBER = "stk_holdernumber"  # 无 _vip 后缀, 本体支持 ann_date/start_date/end_date
+_API_DIVIDEND = "dividend"  # 同上, 本体支持 ann_date 参数
+
 _SPECS: dict[str, _FetchSpec] = {
     # 行情
     "raw_daily": _FetchSpec("daily", _RENAME_OHLCV, is_ohlcv=True),
@@ -78,10 +90,10 @@ _SPECS: dict[str, _FetchSpec] = {
         "fina_indicator", _RENAME_CODE, date_col="end_date", sort_cols=("end_date",)
     ),
     "holder_number": _FetchSpec(
-        "stk_holdernumber", _RENAME_CODE, date_col="end_date", sort_cols=("end_date",)
+        _API_HOLDER_NUMBER, _RENAME_CODE, date_col="end_date", sort_cols=("end_date",)
     ),
     "dividend": _FetchSpec(
-        "dividend", _RENAME_CODE, date_col="end_date", sort_cols=("end_date", "div_proc")
+        _API_DIVIDEND, _RENAME_CODE, date_col="end_date", sort_cols=("end_date", "div_proc")
     ),
     "margin_detail": _FetchSpec("margin_detail", _RENAME_CODE),
     "top_list": _FetchSpec("top_list", _RENAME_CODE, sort_cols=("trade_date", "code")),
@@ -108,6 +120,27 @@ _SPECS: dict[str, _FetchSpec] = {
     "fx_daily": _FetchSpec("fx_daily", _RENAME_CODE, sort_cols=("trade_date", "code")),
     # Wave C — 新闻联播 (T 日 19:30 后由 tushare 入库, ~20:15-20:45 可拉)
     "cctv_news": _FetchSpec("cctv_news", date_col="date", sort_cols=("date",)),
+    # === Bulk VIP 接口 — 按 ann_date 一次拉全市场 (财务表加速) ===
+    # tushare VIP 专有, 需 ≥5000 积分, 免除 per-code 循环的 5000+ API 调用
+    _SPEC_INCOME_BULK: _FetchSpec(
+        "income_vip", _RENAME_CODE, date_col="end_date", sort_cols=("end_date",)
+    ),
+    _SPEC_BALANCESHEET_BULK: _FetchSpec(
+        "balancesheet_vip", _RENAME_CODE, date_col="end_date", sort_cols=("end_date",)
+    ),
+    _SPEC_CASHFLOW_BULK: _FetchSpec(
+        "cashflow_vip", _RENAME_CODE, date_col="end_date", sort_cols=("end_date",)
+    ),
+    _SPEC_FINA_INDICATOR_BULK: _FetchSpec(
+        "fina_indicator_vip", _RENAME_CODE, date_col="end_date", sort_cols=("end_date",)
+    ),
+    # stk_holdernumber / dividend 本体就支持 ann_date, 跟 per-code spec 共享 API 常量
+    _SPEC_HOLDER_NUMBER_BULK: _FetchSpec(
+        _API_HOLDER_NUMBER, _RENAME_CODE, date_col="end_date", sort_cols=("end_date",)
+    ),
+    _SPEC_DIVIDEND_BULK: _FetchSpec(
+        _API_DIVIDEND, _RENAME_CODE, date_col="end_date", sort_cols=("end_date", "div_proc")
+    ),
 }
 
 
@@ -493,6 +526,67 @@ class TushareSource:
     def get_dividend(self, code: str) -> pd.DataFrame:
         """分红送股明细 (按公告事件，一次返全史)。"""
         return self._fetch("dividend", ts_code=code)
+
+    # --- Bulk (VIP) 接口 — 按 ann_date 拉全市场, 1 call vs per-code 5500 call ---
+    # 适用于 daily-sync 场景, 季度末披露日期前后的增量同步.
+    # 注: 首次回补历史可用 period=YYYYMMDD (按 end_date) 会更完整.
+
+    def _bulk_fetch_by_ann_date(
+        self, spec_key: str, start: date | None, end: date | None
+    ) -> pd.DataFrame:
+        """按 ann_date 单天循环拉 — tushare VIP 的 start/end 区间参数在某些 API 上坏掉
+        (fina_indicator_vip 传 start_date+end_date 返 0 行, 传 ann_date 正常), 按天迭代最稳.
+
+        start=end=None 时退化为"今天", 调用方应给具体区间.
+        """
+        if start is None or end is None:
+            return self._fetch(spec_key)  # 不带 date, 让 API 按 default 行为 (一般是最近一天)
+        frames: list[pd.DataFrame] = []
+        cur = start
+        while cur <= end:
+            df = self._fetch(spec_key, ann_date=_fmt_date(cur))
+            if not df.empty:
+                frames.append(df)
+            cur += timedelta(days=1)
+        if not frames:
+            return pd.DataFrame()
+        return pd.concat(frames, ignore_index=True)
+
+    @_auto_refresh
+    def get_income_bulk(self, start: date | None = None, end: date | None = None) -> pd.DataFrame:
+        """全市场利润表, 按 ann_date 区间 (income_vip)."""
+        return self._bulk_fetch_by_ann_date(_SPEC_INCOME_BULK, start, end)
+
+    @_auto_refresh
+    def get_balancesheet_bulk(
+        self, start: date | None = None, end: date | None = None
+    ) -> pd.DataFrame:
+        """全市场资产负债表, 按 ann_date 区间 (balancesheet_vip)."""
+        return self._bulk_fetch_by_ann_date(_SPEC_BALANCESHEET_BULK, start, end)
+
+    @_auto_refresh
+    def get_cashflow_bulk(self, start: date | None = None, end: date | None = None) -> pd.DataFrame:
+        """全市场现金流量表, 按 ann_date 区间 (cashflow_vip)."""
+        return self._bulk_fetch_by_ann_date(_SPEC_CASHFLOW_BULK, start, end)
+
+    @_auto_refresh
+    def get_fina_indicator_bulk(
+        self, start: date | None = None, end: date | None = None
+    ) -> pd.DataFrame:
+        """全市场财务衍生指标, 按 ann_date 区间 (fina_indicator_vip)."""
+        return self._bulk_fetch_by_ann_date(_SPEC_FINA_INDICATOR_BULK, start, end)
+
+    @_auto_refresh
+    def get_holder_number_bulk(
+        self, start: date | None = None, end: date | None = None
+    ) -> pd.DataFrame:
+        """全市场股东户数, 按 ann_date 区间 (stk_holdernumber)."""
+        return self._bulk_fetch_by_ann_date(_SPEC_HOLDER_NUMBER_BULK, start, end)
+
+    @_auto_refresh
+    def get_dividend_bulk(self, start: date | None = None, end: date | None = None) -> pd.DataFrame:
+        """全市场分红送股, 按 ann_date 区间 (dividend)."""
+        return self._bulk_fetch_by_ann_date(_SPEC_DIVIDEND_BULK, start, end)
 
     @_auto_refresh
     def get_margin_detail(

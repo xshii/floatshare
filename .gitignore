@@ -42,6 +42,9 @@ coverage.xml
 .mypy_cache/
 .pytype/
 
+# Claude Code 本地 harness 配置 / 状态 (不共享, 含本地路径)
+.claude/
+
 # Logs
 *.log
 logs/

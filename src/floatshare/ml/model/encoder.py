@@ -141,22 +141,32 @@ class DualAxisBlock(nn.Module):
         )
         self.stock_attn_every = cfg.stock_attn_every
         self.stock_attn_last_dense = cfg.stock_attn_last_dense
+        self._seq_len = cfg.seq_len
+        # 预算 active_t 索引, register_buffer 随 .to(device) 自动搬
+        # 每 forward 三次 (每 block) 从 Python list 建 tensor + CPU→MPS copy 是 tiny 但可省
+        self.register_buffer(
+            "_active_t_buf",
+            self._compute_active_t(cfg.seq_len, cfg.stock_attn_every, cfg.stock_attn_last_dense),
+            persistent=False,
+        )
 
-    def _active_t(self, t: int, device: torch.device) -> Tensor:
-        """返回需要做 stock-attn 的时间步索引."""
-        last_dense_start = max(0, t - self.stock_attn_last_dense)
-        sparse = list(range(0, last_dense_start, max(1, self.stock_attn_every)))
+    @staticmethod
+    def _compute_active_t(t: int, every: int, last_dense: int) -> Tensor:
+        """需要做 stock-attn 的时间步索引 (静态, 只跟 cfg 有关)."""
+        last_dense_start = max(0, t - last_dense)
+        sparse = list(range(0, last_dense_start, max(1, every)))
         dense = list(range(last_dense_start, t))
-        return torch.tensor(sorted(set(sparse + dense)), dtype=torch.long, device=device)
+        return torch.tensor(sorted(set(sparse + dense)), dtype=torch.long)
 
     def forward(self, h: Tensor, stock_mask: Tensor) -> Tensor:
         b, n, t, d = h.shape
+        assert t == self._seq_len, f"DualAxisBlock expects t={self._seq_len}, got {t}"
         # 1. Time-attention per stock
         h_t = h.reshape(b * n, t, d)
         h = h + self.time_attn(self.norm_t(h_t)).reshape(b, n, t, d)
 
         # 2. Sparse stock-attention (only on active_t)
-        active = self._active_t(t, h.device)
+        active = self._active_t_buf
         tp = active.shape[0]
         # 提取活跃时间步切片: (B, N, T', D)
         h_subset = h.index_select(dim=2, index=active)
@@ -164,9 +174,9 @@ class DualAxisBlock(nn.Module):
         h_s = h_subset.permute(0, 2, 1, 3).reshape(b * tp, n, d)
         m_bt = stock_mask.unsqueeze(1).expand(b, tp, n).reshape(b * tp, n)
         h_s = self.stock_attn(self.norm_s(h_s), mask=m_bt)
-        # 用零张量做 scatter, 保留梯度
-        h_s_full = torch.zeros_like(h)
         h_s_scattered = h_s.reshape(b, tp, n, d).permute(0, 2, 1, 3)  # (B,N,T',D)
+        # 用零张量做 scatter, 保留梯度; dtype 跟 h_s 对齐 (autocast 下可能是 bf16)
+        h_s_full = h_s_scattered.new_zeros(b, n, t, d)
         h_s_full.index_copy_(2, active, h_s_scattered)
         h = h + h_s_full
 

@@ -23,6 +23,7 @@ from floatshare.ml.data.universe import select_per_industry_top_k
 from floatshare.ml.evaluation.cube import classifier_metrics
 from floatshare.ml.labels import label_stats
 from floatshare.ml.model.agent import ActorCritic
+from floatshare.ml.profiling import SectionTimer, maybe_section
 from floatshare.ml.training.base import BaseTrainer
 from floatshare.observability import logger
 
@@ -37,7 +38,11 @@ _REWARD_HORIZON = 3
 
 @dataclass(slots=True)
 class _PopTrainCtx:
-    """Pop 训练循环需要的全部数据."""
+    """Pop 训练循环需要的全部数据.
+
+    features / labels 一次性上 MPS, 避免每 batch 的 CPU np.stack + host→MPS 复制.
+    mask/tt/ind 模板也预分配, slice 复用 — 减少 MPS allocator 压力.
+    """
 
     cube_tr: MarketCube
     cube_va: MarketCube
@@ -47,6 +52,14 @@ class _PopTrainCtx:
     pos_weight: torch.Tensor
     ema_model: ActorCritic | None
     batch_days: int
+    # GPU 预加载的特征 / 标签 — 训练/验证循环全程在 device 上切 window
+    features_tr_gpu: torch.Tensor  # (n_days, n_tokens, F)
+    features_va_gpu: torch.Tensor
+    labels_tr_gpu: torch.Tensor  # (n_days, n_tokens) int
+    # 预分配的 mask/tt/ind 模板, batch_days 条 — 可 slice 复用
+    mask_tmpl: torch.Tensor  # (batch_days, n_tokens) bool
+    tt_tmpl: torch.Tensor  # (batch_days, n_tokens) long
+    ind_tmpl: torch.Tensor  # (batch_days, n_tokens) long
 
 
 class PopTrainer(BaseTrainer):
@@ -65,13 +78,24 @@ class PopTrainer(BaseTrainer):
         ema_decay: float = 0.995,
         warmup_frac: float = 0.05,
         resume_from_ckpt: str | None = None,
+        note: str | None = None,
+        eval_every: int = 2,
+        timer: SectionTimer | None = None,
     ) -> None:
-        super().__init__(model_cfg, data_cfg, train_cfg, epochs=epochs, eval_every=2)
+        super().__init__(
+            model_cfg,
+            data_cfg,
+            train_cfg,
+            epochs=epochs,
+            eval_every=eval_every,
+            note=note,
+        )
         self.batch_days = batch_days
         self.label_smooth = label_smooth
         self.use_ema = use_ema
         self.ema_decay = ema_decay
         self.warmup_frac = warmup_frac
+        self._timer = timer  # None = 零开销; Not None = 分段打点 (profile 模式)
 
         if resume_from_ckpt:
             skipped = self.model.load_backbone(resume_from_ckpt, skip_shape_mismatch=True)
@@ -112,9 +136,22 @@ class PopTrainer(BaseTrainer):
         ema_model = None
         if self.use_ema:
             ema_model = ActorCritic(self.model_cfg).to(self.device)
-            ema_model.load_state_dict(self.model.state_dict())
+            # torch.compile 会给 state_dict key 加 _orig_mod. 前缀, 这里 strip 掉再 load
+            src_sd = {k.removeprefix("_orig_mod."): v for k, v in self.model.state_dict().items()}
+            ema_model.load_state_dict(src_sd)
             for p in ema_model.parameters():
                 p.requires_grad = False
+
+        # 一次性把 features/labels 搬到 device — 后续 slice 在 MPS 上做, 避免
+        # 每 batch CPU→MPS copy (55 MB×100 batch/epoch ≈ 5.5 GB 带宽)
+        features_tr_gpu = torch.from_numpy(cube_tr.features).to(self.device)
+        features_va_gpu = torch.from_numpy(cube_va.features).to(self.device)
+        labels_tr_gpu = torch.from_numpy(tr_labels).to(self.device)
+        n_tokens = cube_tr.n_tokens
+        bd = self.batch_days
+        mask_tmpl = torch.ones(bd, n_tokens, dtype=torch.bool, device=self.device)
+        tt_tmpl = torch.ones(bd, n_tokens, dtype=torch.long, device=self.device)
+        ind_tmpl = torch.zeros(bd, n_tokens, dtype=torch.long, device=self.device)
 
         return _PopTrainCtx(
             cube_tr=cube_tr,
@@ -125,6 +162,12 @@ class PopTrainer(BaseTrainer):
             pos_weight=pos_weight,
             ema_model=ema_model,
             batch_days=self.batch_days,
+            features_tr_gpu=features_tr_gpu,
+            features_va_gpu=features_va_gpu,
+            labels_tr_gpu=labels_tr_gpu,
+            mask_tmpl=mask_tmpl,
+            tt_tmpl=tt_tmpl,
+            ind_tmpl=ind_tmpl,
         )
 
     def _build_val_ctx(self, train_ctx: _PopTrainCtx) -> _PopTrainCtx:
@@ -170,7 +213,7 @@ class PopTrainer(BaseTrainer):
         eval_model = ctx.ema_model if ctx.ema_model is not None else self.model
         m = classifier_metrics(
             eval_model,
-            ctx.cube_va.features,
+            ctx.features_va_gpu,
             ctx.va_labels,
             self.model_cfg.seq_len,
             self.device,
@@ -219,6 +262,7 @@ class PopTrainer(BaseTrainer):
             phase=3,
             universe=universe,
         )
+        logger.info("构建 val cube (phase=3) …")
         cube_va = build_cube(
             self.data_cfg,
             self.data_cfg.val_start,
@@ -249,42 +293,56 @@ class PopTrainer(BaseTrainer):
 
         Returns (loss_item, n_pos_samples). None 表示 batch 无有效样本 (跳过).
         """
-        x = np.stack([ctx.cube_tr.features[t - seq_len + 1 : t + 1] for t in batch_idx])
-        x = np.transpose(x, (0, 2, 1, 3))
-        y = ctx.tr_labels[batch_idx]
+        b = len(batch_idx)
+        with maybe_section(self._timer, "data_prep"):
+            # 全在 GPU 上构 window: (B, T, N, F) → (B, N, T, F)
+            windows = torch.stack(
+                [ctx.features_tr_gpu[t - seq_len + 1 : t + 1] for t in batch_idx],
+            )
+            x_t = windows.permute(0, 2, 1, 3).contiguous()
+            y_t = ctx.labels_tr_gpu[batch_idx]  # (B, N)
+            # mask/tt/ind 预分配模板的前 b 行 (batch_days 是上限, 末尾 batch 可能不足)
+            mask_t = ctx.mask_tmpl[:b]
+            tt = ctx.tt_tmpl[:b]
+            ind = ctx.ind_tmpl[:b]
 
-        x_t = torch.from_numpy(x).to(self.device)
-        y_t = torch.from_numpy(y).to(self.device)
-        mask_t = torch.ones(x_t.shape[:2], dtype=torch.bool, device=self.device)
-        tt = torch.ones(x_t.shape[:2], dtype=torch.long, device=self.device)
-        ind = torch.zeros(x_t.shape[:2], dtype=torch.long, device=self.device)
-
-        out = self.model(x_t, tt, ind, mask_t)
+        # bf16 autocast: model forward 走 bfloat16 (MPS native), loss 强制 fp32
+        # 包 matmul/attn/FFN; softmax/layernorm/loss 内部会自动 upcast to fp32
+        with (
+            maybe_section(self._timer, "forward"),
+            torch.autocast(device_type=self.device.type, dtype=torch.bfloat16),
+        ):
+            out = self.model(x_t, tt, ind, mask_t)
         valid_mask = y_t >= 0
         if valid_mask.sum() == 0:
             return None, 0
 
-        # Label smoothing: 0.05 → 1→0.95, 0→0.05
-        y_f = y_t.float().clamp(0, 1)
-        y_smooth = y_f * (1 - self.label_smooth) + 0.5 * self.label_smooth
+        with maybe_section(self._timer, "loss"):
+            # Label smoothing: 0.05 → 1→0.95, 0→0.05
+            y_f = y_t.float().clamp(0, 1)
+            y_smooth = y_f * (1 - self.label_smooth) + 0.5 * self.label_smooth
 
-        # BCE with logits + pos_weight (数值更稳 — 从 sigmoid p_hit 反推 logits)
-        p_clamped = out.p_hit.clamp(1e-7, 1 - 1e-7)
-        logits = torch.log(p_clamped / (1 - p_clamped))
-        loss = F.binary_cross_entropy_with_logits(
-            logits[valid_mask],
-            y_smooth[valid_mask],
-            pos_weight=ctx.pos_weight,
-        )
+            # BCE with logits + pos_weight — 显式 .float() 把 bf16 p_hit upcast 回 fp32
+            # 避免 log/clamp 在 bf16 下数值不稳 (p_hit 接近 0/1 时 log 会炸)
+            p_clamped = out.p_hit.float().clamp(1e-7, 1 - 1e-7)
+            logits = torch.log(p_clamped / (1 - p_clamped))
+            loss = F.binary_cross_entropy_with_logits(
+                logits[valid_mask],
+                y_smooth[valid_mask],
+                pos_weight=ctx.pos_weight,
+            )
 
-        self.optimizer.zero_grad()
-        loss.backward()
-        torch.nn.utils.clip_grad_norm_(self.model.parameters(), 0.5)
-        self.optimizer.step()
-        self.scheduler.step()
+        with maybe_section(self._timer, "backward"):
+            self.optimizer.zero_grad()
+            loss.backward()
 
-        if ctx.ema_model is not None:
-            self._ema_update(ctx.ema_model)
+        with maybe_section(self._timer, "optim_step"):
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), 0.5)
+            self.optimizer.step()
+            self.scheduler.step()
+
+            if ctx.ema_model is not None:
+                self._ema_update(ctx.ema_model)
         self._last_ctx = ctx  # 供 _save_ckpt 取 EMA
         return float(loss.item()), int(y_f[valid_mask].sum().item())
 

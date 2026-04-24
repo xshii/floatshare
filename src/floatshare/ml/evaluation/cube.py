@@ -2,6 +2,9 @@
 
 不走 MarketEnv.step. 直接拉 cube.features 的 (T-window) 切片批量推理, 收 p_hit.
 用于 train_pop.py 每 N epoch 算 val 指标, 以及离线跑 AUC.
+
+features 以 torch.Tensor (GPU-resident) 传入 — caller 负责一次性 `.to(device)`,
+避免推理时 per-batch host→device 复制.
 """
 
 from __future__ import annotations
@@ -20,8 +23,8 @@ if TYPE_CHECKING:
 
 def classifier_metrics(
     model: ActorCritic,
-    features: np.ndarray,  # (n_days, n_tokens, F)
-    labels: np.ndarray,  # (n_days, n_tokens) int8 (1/0/-1)
+    features: torch.Tensor,  # (n_days, n_tokens, F) device-resident
+    labels: np.ndarray,  # (n_days, n_tokens) int8 (1/0/-1) on CPU (sklearn AUC 用)
     seq_len: int,
     device: torch.device,
     top_k: int = 10,
@@ -49,7 +52,7 @@ def classifier_metrics(
 
 def _batched_p_hit_inference(
     model: ActorCritic,
-    features: np.ndarray,
+    features: torch.Tensor,
     labels: np.ndarray,
     seq_len: int,
     device: torch.device,
@@ -59,9 +62,13 @@ def _batched_p_hit_inference(
     model.eval()
     n_days = features.shape[0]
     valid_starts = list(range(seq_len - 1, n_days))
+    if not valid_starts:
+        # n_days < seq_len — 没法构造单个评估窗口 (通常是 val 太短); 返回空, caller 处理
+        return np.array([], dtype=np.float32), np.array([], dtype=np.int8)
     p_chunks, y_chunks = [], []
     try:
-        with torch.no_grad():
+        # bf16 autocast — eval 精度足够 (ranking 指标对 1e-3 误差不敏感), 速度 1.5-2×
+        with torch.no_grad(), torch.autocast(device_type=device.type, dtype=torch.bfloat16):
             for i in range(0, len(valid_starts), batch_days):
                 batch_idx = valid_starts[i : i + batch_days]
                 p, y = _infer_one_batch(model, features, labels, batch_idx, seq_len, device)
@@ -74,18 +81,19 @@ def _batched_p_hit_inference(
 
 def _infer_one_batch(
     model: ActorCritic,
-    features: np.ndarray,
+    features: torch.Tensor,
     labels: np.ndarray,
     batch_idx: list[int],
     seq_len: int,
     device: torch.device,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """从 cube 切 B 天 window, forward → p_hit numpy."""
-    x = np.stack([features[t - seq_len + 1 : t + 1] for t in batch_idx])
-    x = np.transpose(x, (0, 2, 1, 3))  # (B, N, T, F)
-    x_t = torch.from_numpy(x).to(device)
+    """从 cube 切 B 天 window, forward → p_hit numpy. features 已在 device 上."""
+    # (B, T, N, F) → (B, N, T, F), slice 都在 device 上做
+    windows = torch.stack([features[t - seq_len + 1 : t + 1] for t in batch_idx])
+    x_t = windows.permute(0, 2, 1, 3).contiguous()
     mask_t = torch.ones(x_t.shape[:2], dtype=torch.bool, device=device)
     tt = torch.ones(x_t.shape[:2], dtype=torch.long, device=device)
     ind = torch.zeros(x_t.shape[:2], dtype=torch.long, device=device)
     out = cast(PopActionOut, model(x_t, tt, ind, mask_t))
-    return out.p_hit.cpu().numpy(), labels[np.array(batch_idx)]
+    # bf16 下 .numpy() 不支持, 显式 .float() 回 fp32
+    return out.p_hit.float().cpu().numpy(), labels[np.array(batch_idx)]
