@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- 反向域名唯一 label -->
+  <key>Label</key>
+  <string>com.floatshare.daily-train</string>
+
+  <!-- 触发命令 -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/gakki/dev/floatshare/scripts/daily-train.sh</string>
+  </array>
+
+  <!-- 调度: 每天 22:00 (daily-sync 20:00 完 → 22:00 起训, 错开 sync window) -->
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>22</integer>
+    <key>Minute</key>
+    <integer>0</integer>
+  </dict>
+
+  <!-- 电脑睡眠错过的任务, 开机后不立刻补 (避免白天触发影响使用) -->
+  <key>RunAtLoad</key>
+  <false/>
+
+  <!-- 工作目录 -->
+  <key>WorkingDirectory</key>
+  <string>/Users/gakki/dev/floatshare</string>
+
+  <!-- launchd 自己的日志 (脚本内 loguru 写自己日志文件) -->
+  <key>StandardOutPath</key>
+  <string>/Users/gakki/dev/floatshare/logs/launchd-daily-train.out</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/gakki/dev/floatshare/logs/launchd-daily-train.err</string>
+
+  <!-- 后台任务, 任务结束释放资源 -->
+  <key>ProcessType</key>
+  <string>Background</string>
+</dict>
+</plist>

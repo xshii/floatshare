@@ -46,6 +46,7 @@ class BaseTrainer(ABC):
         eval_every: int = 2,
         note: str | None = None,
         tracker: MetricsTracker | None = None,
+        ckpt_name_override: str | None = None,
     ) -> None:
         self.model_cfg = model_cfg
         self.data_cfg = data_cfg
@@ -53,6 +54,8 @@ class BaseTrainer(ABC):
         self.epochs = epochs
         self.eval_every = eval_every
         self.note = note
+        # Override _ckpt_name property default — 用于区分 anchor (冷启) / warm (每日) ckpt
+        self._ckpt_name_override = ckpt_name_override
 
         # 先 seed 再建模型: ActorCritic.__init__ 用 torch.randn 初始化 weights,
         # np.random.shuffle 是 train loop 里的 batch 洗牌, MPS RNG 影响 dropout.
@@ -247,7 +250,8 @@ class BaseTrainer(ABC):
         if cur > self._best_metric:
             self._best_metric = cur
             self._no_improve = 0
-            path = self.ckpt_dir / self._ckpt_name
+            ckpt_name = self._ckpt_name_override or self._ckpt_name
+            path = self.ckpt_dir / ckpt_name
             self._save_ckpt(path, val_m)
             handle.update_best(cur, epoch)
             logger.info(

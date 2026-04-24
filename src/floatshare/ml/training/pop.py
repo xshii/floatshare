@@ -81,6 +81,7 @@ class PopTrainer(BaseTrainer):
         note: str | None = None,
         eval_every: int = 2,
         timer: SectionTimer | None = None,
+        ckpt_name_override: str | None = None,
     ) -> None:
         super().__init__(
             model_cfg,
@@ -89,6 +90,7 @@ class PopTrainer(BaseTrainer):
             epochs=epochs,
             eval_every=eval_every,
             note=note,
+            ckpt_name_override=ckpt_name_override,
         )
         self.batch_days = batch_days
         self.label_smooth = label_smooth

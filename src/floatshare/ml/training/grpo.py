@@ -23,6 +23,7 @@ from torch import Tensor
 
 from floatshare.ml.data.dataset import build_cube
 from floatshare.ml.data.loader import load_market_returns
+from floatshare.ml.data.universe import select_per_industry_top_k
 from floatshare.ml.evaluation.env import run_deterministic_rollout
 from floatshare.ml.evaluation.metrics import (
     compute_max_drawdown,
@@ -55,7 +56,11 @@ class _GRPOTrainCtx:
 
 
 class GRPOTrainer(BaseTrainer):
-    """Phase 1/2 GRPO 训练器 — critic-free, 组内归一化 baseline."""
+    """Phase 1/2/3 GRPO 训练器 — critic-free, 组内归一化 baseline.
+
+    Phase 3 抓涨停: action = Dirichlet over 461 股, reward = Σ w_i · (r_i - r_market),
+    typical reward_horizon=1 对齐 HitLabelConfig 1-day hold.
+    """
 
     def __init__(
         self,
@@ -65,8 +70,9 @@ class GRPOTrainer(BaseTrainer):
         train_cfg,
         *,
         epochs: int,
+        note: str | None = None,
     ) -> None:
-        super().__init__(model_cfg, data_cfg, train_cfg, epochs=epochs, eval_every=5)
+        super().__init__(model_cfg, data_cfg, train_cfg, epochs=epochs, eval_every=5, note=note)
         self.grpo_cfg = grpo_cfg
 
     @property
@@ -190,12 +196,23 @@ class GRPOTrainer(BaseTrainer):
     # --- helpers ---------------------------------------------------------
 
     def _build_cubes(self):
+        # Phase 3 需要显式 universe (top-15 per SW L1, ~460 股), 对齐 Pop 的做法;
+        # Phase 1/2 走 cube 内置 default universe.
+        universe: list[str] | None = None
+        if self.model_cfg.phase == 3:
+            universe = select_per_industry_top_k(
+                db_path=self.data_cfg.db_path,
+                as_of_date=self.data_cfg.train_end,  # universe 按训练尾取 snapshot
+            )
+            logger.info(f"GRPO phase=3 universe: {len(universe)} 股 (train_end snapshot)")
+
         logger.info("GRPO 构建 train cube …")
         cube_train = build_cube(
             self.data_cfg,
             self.data_cfg.train_start,
             self.data_cfg.train_end,
             phase=self.model_cfg.phase,
+            universe=universe,
         )
         logger.info(f"  train: {cube_train.n_days} days × {cube_train.n_tokens} tokens")
         logger.info("GRPO 构建 val cube …")
@@ -204,6 +221,7 @@ class GRPOTrainer(BaseTrainer):
             self.data_cfg.val_start,
             self.data_cfg.val_end,
             phase=self.model_cfg.phase,
+            universe=universe,  # train/val 共享 universe 保证 stock 索引一致
         )
         logger.info(f"  val: {cube_val.n_days} days × {cube_val.n_tokens} tokens")
         return cube_train, cube_val

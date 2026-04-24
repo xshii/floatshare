@@ -90,11 +90,12 @@ def main() -> int:
     print(f"[gen] rolling universe: {len(month_starts)} 个月, 每月头 1 号重选")
 
     # 预算每月 universe (一次性批量算 — 每次 ~100ms)
+    db_path = DataConfig().db_path
     monthly_universes: list[tuple[pd.Timestamp, list[str]]] = []
     for m_start in month_starts:
         # universe 用 m_start 当天的 snapshot — 严格只用历史信息
         universe = select_per_industry_top_k(
-            db_path="data/floatshare.db",
+            db_path=db_path,
             as_of_date=m_start.strftime("%Y-%m-%d"),
         )
         monthly_universes.append((m_start, universe))

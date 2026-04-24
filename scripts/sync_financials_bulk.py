@@ -51,17 +51,16 @@ class _BulkJob:
     record_cls: type  # 落库 schema
 
 
-# 6 个 job: 每个 job = 名字 + bulk fetch 方法 + DB record 类.
-# fetch lambda 是为了 name-based 索引稳定, 不依赖 TushareSource 的属性顺序.
+# 6 个 job: 每个 job = 名字 + unbound method 引用 + DB record 类.
+# 用 `TushareSource.get_*_bulk` 取未绑定方法, 调用时 fetch(ts, s, e) → ts 作 self.
+# 不写 lambda 更干净; 重命名时 IDE 能自动跟. fetch 签名 = (ts, start, end) → DataFrame.
 _JOBS: tuple[_BulkJob, ...] = (
-    _BulkJob("income", lambda ts, s, e: ts.get_income_bulk(s, e), Income),
-    _BulkJob("balancesheet", lambda ts, s, e: ts.get_balancesheet_bulk(s, e), Balancesheet),
-    _BulkJob("cashflow", lambda ts, s, e: ts.get_cashflow_bulk(s, e), Cashflow),
-    _BulkJob("fina_indicator", lambda ts, s, e: ts.get_fina_indicator_bulk(s, e), FinaIndicator),
-    _BulkJob(
-        "stk_holder_number", lambda ts, s, e: ts.get_holder_number_bulk(s, e), StkHolderNumber
-    ),
-    _BulkJob("dividend", lambda ts, s, e: ts.get_dividend_bulk(s, e), Dividend),
+    _BulkJob("income", TushareSource.get_income_bulk, Income),
+    _BulkJob("balancesheet", TushareSource.get_balancesheet_bulk, Balancesheet),
+    _BulkJob("cashflow", TushareSource.get_cashflow_bulk, Cashflow),
+    _BulkJob("fina_indicator", TushareSource.get_fina_indicator_bulk, FinaIndicator),
+    _BulkJob("stk_holder_number", TushareSource.get_holder_number_bulk, StkHolderNumber),
+    _BulkJob("dividend", TushareSource.get_dividend_bulk, Dividend),
 )
 
 

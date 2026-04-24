@@ -12,7 +12,7 @@ Dirichlet (industry + 每 industry 内 stocks), log_prob 相加 (条件概率独
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, assert_never
 
 import numpy as np
 import torch
@@ -25,6 +25,7 @@ from floatshare.ml.types import (
     EnvState,
     HierarchicalActionOut,
     IndustryActionOut,
+    PopActionOut,
 )
 
 if TYPE_CHECKING:
@@ -119,18 +120,21 @@ def _sample_action(
     """
     if isinstance(out, IndustryActionOut):
         return _sample_dirichlet(out.logits, mask)
-    if not isinstance(out, HierarchicalActionOut):
-        raise TypeError(f"rollout 不支持 {type(out).__name__} (PopActionOut 走监督路径)")
-    # HierarchicalActionOut: 顶层 industry + 底层 stock 各自 Dirichlet
-    ind_w, ind_lp = _sample_dirichlet(
-        out.ind_logits,
-        mask[:, :n_industries],
-    )
-    stock_w, stock_lp = _sample_dirichlet(
-        out.stock_logits,
-        mask[:, n_industries:],
-    )
-    return torch.cat([ind_w, stock_w], dim=-1), ind_lp + stock_lp
+    if isinstance(out, PopActionOut):
+        # Phase 3: 所有 token 是股票, 从 stock_logits 整片采 Dirichlet
+        return _sample_dirichlet(out.stock_logits, mask)
+    if isinstance(out, HierarchicalActionOut):
+        # 顶层 industry + 底层 stock 各自 Dirichlet, log_prob 相加 (条件独立)
+        ind_w, ind_lp = _sample_dirichlet(
+            out.ind_logits,
+            mask[:, :n_industries],
+        )
+        stock_w, stock_lp = _sample_dirichlet(
+            out.stock_logits,
+            mask[:, n_industries:],
+        )
+        return torch.cat([ind_w, stock_w], dim=-1), ind_lp + stock_lp
+    assert_never(out)  # 穷尽 ActionOut 的 3 个子类, 不可达
 
 
 # 兼容旧 dict 入口 (PPO update 需要从更新后的 logits 重新构 dist)
@@ -146,7 +150,9 @@ def select_action_logits(out: ActionOut) -> Tensor:
         return out.logits
     if isinstance(out, HierarchicalActionOut):
         return out.ind_logits
-    raise TypeError(f"unknown ActionOut: {type(out)}")
+    if isinstance(out, PopActionOut):
+        return out.stock_logits  # Phase 3: 股票权重 logits
+    assert_never(out)
 
 
 # Dirichlet alpha clamp 上限 5.0 防止策略坍缩 (alpha 大 → 分布尖 → 探索不足);

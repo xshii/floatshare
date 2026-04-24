@@ -51,10 +51,14 @@ class MarketEnv:
             neginf=0.0,
         ).astype(np.float32)
 
-        # market benchmark: 默认用 31 行业日均收益代理 (兜底)
+        # market benchmark: 默认兜底策略分 phase
+        # - phase 1/2: 前 n_industries 个 token 是行业, 用行业日均收益代理
+        # - phase 3: tokens 全是股票 (无行业 token), 用全股池日均收益代理
         if market_returns is not None:
             n_avail = len(self.log_returns)
             self.market_returns = market_returns[:n_avail].astype(np.float32)
+        elif model_cfg.phase == 3:
+            self.market_returns = self.log_returns.mean(axis=1).astype(np.float32)
         else:
             self.market_returns = self.log_returns[:, : model_cfg.n_industries].mean(axis=1)
 
@@ -115,8 +119,10 @@ class MarketEnv:
 
         if self.mcfg.phase == 1:
             reward = self._reward_phase1(weights, K_ret, mkt_K_ret)
-        else:
+        elif self.mcfg.phase == 2:
             reward = self._reward_phase2(weights, K_ret, mkt_K_ret)
+        else:  # phase == 3
+            reward = self._reward_phase3(weights, K_ret, mkt_K_ret)
 
         if prev_weights is not None:
             turnover = float(np.abs(weights - prev_weights).sum())
@@ -182,3 +188,18 @@ class MarketEnv:
         r_timing = float((ind_total_w * timing_alpha).sum())
 
         return r_select + self.cfg.industry_timing_weight * r_timing
+
+    def _reward_phase3(
+        self,
+        weights: np.ndarray,
+        K_ret: np.ndarray,
+        mkt_K_ret: float,
+    ) -> float:
+        """抓涨停选股 alpha: Σ w_i · (r_i - r_market).
+
+        Phase 3 tokens 全是股票 (无行业 token), weights shape (n_stocks,).
+        Reward 鼓励把权重压在超越市场的股上. Dirichlet 采样产连续权重,
+        backtest 部署时可以 argmax / top-K 离散化 (训练让 softmax 自然尖锐).
+        """
+        alpha = K_ret - mkt_K_ret
+        return float((weights * alpha).sum())
