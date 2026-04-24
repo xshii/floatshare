@@ -197,6 +197,10 @@ class BaseTrainer(ABC):
         """一个 epoch — train + optional eval + tracker log. True = 早停."""
         t0 = time.time()
         train_m = self._run_train_epoch(epoch, train_ctx)
+        # MPS allocator 跨 epoch 碎片化 (实测 Pop 每 epoch 从 35 → 53 min 漂移 ~50%),
+        # epoch 边界主动回收; 此时 autograd graph 已释放, 安全.
+        if self.device.type == "mps":
+            torch.mps.empty_cache()
         train_t = time.time() - t0
         cur_lr = self.optimizer.param_groups[0]["lr"]
 

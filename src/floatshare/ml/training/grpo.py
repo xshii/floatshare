@@ -227,7 +227,14 @@ class GRPOTrainer(BaseTrainer):
         return cube_train, cube_val
 
     def _load_market_benchmark(self) -> tuple[np.ndarray | None, np.ndarray | None]:
-        if getattr(self.train_cfg, "market_baseline", "equal_sw") != "hs300":
+        # Phase 3 强制 HS300: phase 3 tokens 全是股票, 若 benchmark fallback 到
+        # universe-mean 会形成循环引用 (我们要选的股也是 benchmark 组成) → 必须用
+        # 外部指数. Phase 1/2 保留原 opt-in 逻辑 (equal_sw / hs300).
+        use_hs300 = (
+            self.model_cfg.phase == 3
+            or getattr(self.train_cfg, "market_baseline", "equal_sw") == "hs300"
+        )
+        if not use_hs300:
             return None, None
         mkt_train = load_market_returns(
             self.data_cfg.db_path, self.data_cfg.train_start, self.data_cfg.train_end
@@ -235,6 +242,12 @@ class GRPOTrainer(BaseTrainer):
         mkt_val = load_market_returns(
             self.data_cfg.db_path, self.data_cfg.val_start, self.data_cfg.val_end
         ).to_numpy()
+        if self.model_cfg.phase == 3 and (len(mkt_train) == 0 or len(mkt_val) == 0):
+            logger.warning(
+                "[grpo] phase=3 HS300 数据缺失 (可能 index_daily 表 000300.SH 没 sync), "
+                "退回 universe-mean fallback (严谨性降低)"
+            )
+            return None, None
         return mkt_train, mkt_val
 
 

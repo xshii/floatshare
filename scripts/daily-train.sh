@@ -69,5 +69,8 @@ WARM="${CKPT_DIR}/pop_warm_latest.pt"
       --note "daily warm-start from $(basename "$RESUME") @ $TODAY" \
     || { echo "ERROR: train exit $?"; exit 1; }
 
+  # 3. Drift alert: warm AUC 比 anchor 掉 > 5% 就 Bark 告警 (metrics.db 读)
+  python scripts/drift_check.py || echo "drift check exit $?, 不阻塞"
+
   echo "===== Daily train ended at $(date '+%Y-%m-%d %H:%M:%S') ====="
 } >> "$LOG_FILE" 2>&1
